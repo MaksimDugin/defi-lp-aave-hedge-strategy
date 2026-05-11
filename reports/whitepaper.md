@@ -151,10 +151,10 @@ $$
 $$
 NAV_t =
 V_{LP,t}
-+ C_{Aave,t}
-- D_{Aave,t}
-+ Idle_t
-- Costs_t.
++C_{Aave,t}
+-D_{Aave,t}
++Idle_t
+-Costs_t.
 $$
 
 Где:
