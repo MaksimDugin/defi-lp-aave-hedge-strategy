@@ -500,3 +500,745 @@ $$
 
 Финальный вывод строится не только на том, победила ли стратегия baseline по доходности, но и на том, насколько оправданным оказался trade-off между LP fee income и hedge costs.
 
+## 9. Backtesting protocol
+
+### 9.1. Цель backtest
+
+Backtest нужен для проверки, улучшает ли Aave-хеджированная LP-стратегия результат plain Uniswap V2 ETH/USDC LP после учёта всех основных издержек:
+
+* impermanent loss;
+* Aave borrow cost;
+* Aave supply yield;
+* gas costs;
+* slippage;
+* rebalancing turnover;
+* idle token inefficiency.
+
+Главное сравнение проводится между:
+
+1. Buy & Hold 50/50 ETH/USDC;
+2. plain Uniswap V2 ETH/USDC LP;
+3. LP с fixed initial hedge;
+4. dynamic Aave-hedged LP.
+
+Основной benchmark — **plain Uniswap V2 LP**, потому что наша стратегия является его модификацией.
+
+### 9.2. Начальные условия
+
+Базовые параметры backtest:
+
+```text
+Initial capital = 100,000 USDC
+Accounting currency = USDC
+LP allocation = 50%
+Aave collateral allocation = 50%
+Pool = Uniswap V2 ETH/USDC
+Lending protocol = Aave V3
+Collateral asset = USDC
+Borrowed asset = WETH
+Base hedge ratio = 75%
+Rebalance threshold = 10%
+Minimum health factor = 1.5
+Idle ratio limit = 5%
+```
+
+Начальный капитал делится на две равные части:
+
+```text
+50,000 USDC equivalent → Uniswap V2 ETH/USDC LP
+50,000 USDC → Aave V3 collateral reserve
+```
+
+Для LP leg половина LP-капитала конвертируется в ETH, вторая половина остаётся в USDC. Затем ETH и USDC вносятся в Uniswap V2 ETH/USDC pool.
+
+Для hedge leg USDC вносится в Aave V3 как collateral. После этого стратегия занимает WETH, продаёт borrowed WETH в USDC и учитывает эту позицию как short ETH exposure.
+
+### 9.3. Частота backtest
+
+Основная частота backtest выбирается исходя из доступности и качества данных.
+
+Базовый вариант:
+
+```text
+Frequency = hourly
+```
+
+Если hourly data по Aave или Uniswap оказываются неполными или нестабильными, используется daily frequency. В этом случае ограничение явно фиксируется в разделе Data limitations.
+
+Hourly frequency предпочтительнее, потому что она лучше отражает:
+
+* изменение цены ETH;
+* накопление LP fees;
+* изменение Aave borrow/supply rates;
+* необходимость ребалансировки hedge;
+* execution costs.
+
+### 9.4. Execution assumptions
+
+Backtest использует следующие execution assumptions:
+
+1. Сделки исполняются по наблюдаемой цене на timestamp.
+2. Slippage учитывается отдельно через фиксированную bps-модель.
+3. Gas cost применяется к каждому действию, требующему транзакции:
+
+   * LP entry;
+   * LP exit;
+   * borrow;
+   * repay;
+   * swap borrowed WETH to USDC;
+   * swap USDC to WETH for repay;
+   * rebalance.
+4. Aave borrow cost начисляется на outstanding WETH debt.
+5. Aave supply yield начисляется на USDC collateral.
+6. Rebalance происходит только при выполнении threshold condition и risk checks.
+7. Circuit breaker может заблокировать увеличение debt.
+8. Все idle tokens включаются в NAV.
+
+### 9.5. Transaction costs
+
+В backtest учитываются три типа execution costs.
+
+#### 1. Gas costs
+
+Gas cost задаётся в USDC на каждую операцию:
+
+```text
+gas_cost_per_rebalance = fixed USDC amount
+```
+
+Для sensitivity analysis можно использовать несколько сценариев:
+
+```text
+low gas
+medium gas
+high gas
+```
+
+Пример:
+
+```text
+gas_cost_per_rebalance ∈ {5, 15, 30} USDC
+```
+
+#### 2. Slippage
+
+Slippage задаётся как процент от notional сделки:
+
+```text
+slippage_cost = trade_notional × slippage_bps / 10,000
+```
+
+Базовый вариант:
+
+```text
+slippage_bps = 10
+```
+
+Для sensitivity analysis:
+
+```text
+slippage_bps ∈ {5, 10, 25}
+```
+
+#### 3. Aave funding
+
+Aave funding cost считается на outstanding WETH debt:
+
+```text
+borrow_cost_t = WETH_debt_t × ETH_price_t × borrow_rate_t
+```
+
+Aave supply yield считается на USDC collateral:
+
+```text
+supply_yield_t = USDC_collateral_t × supply_rate_t
+```
+
+### 9.6. Rebalancing assumptions
+
+На каждом timestamp стратегия рассчитывает:
+
+```text
+target_weth_debt_t = hedge_ratio × LP_ETH_delta_t
+```
+
+Затем считается hedge error:
+
+```text
+hedge_error_t =
+abs(target_weth_debt_t - current_weth_debt_t) / LP_ETH_delta_t
+```
+
+Rebalance выполняется, если:
+
+```text
+hedge_error_t > rebalance_threshold
+```
+
+Базовый threshold:
+
+```text
+rebalance_threshold = 10%
+```
+
+Если целевой debt выше текущего, стратегия занимает дополнительный WETH и продаёт его в USDC.
+
+Если целевой debt ниже текущего, стратегия покупает WETH за USDC и погашает часть Aave debt.
+
+Rebalance не выполняется, если:
+
+* circuit breaker активен;
+* health factor ниже минимального уровня;
+* LTV превышает лимит;
+* ожидаемый эффект от rebalance меньше gas и slippage costs;
+* данные на timestamp неполные.
+
+### 9.7. Regime split
+
+Результаты анализируются не только на всём периоде, но и по рыночным режимам.
+
+Основные режимы:
+
+```text
+1. ETH uptrend
+2. ETH downtrend
+3. Sideways low-volatility market
+4. High-volatility chop
+5. Crash and recovery
+```
+
+Regime split нужен, потому что стратегия не обязана одинаково хорошо работать во всех условиях. Ожидается, что Aave hedge будет полезнее в боковом и волатильном рынке, где LP fees могут компенсировать funding и execution costs. В сильном направленном тренде hedge может ухудшать результат из-за стоимости займа и отрицательной gamma LP-позиции.
+
+### 9.8. Monte Carlo stress tests
+
+Помимо исторического backtest, стратегия проверяется на Monte Carlo scenarios. Цель Monte Carlo — не заменить historical data, а показать устойчивость стратегии в разных искусственно заданных рыночных режимах.
+
+Сценарии:
+
+```text
+1. Strong ETH uptrend
+2. Strong ETH downtrend
+3. Sideways low-volatility
+4. High-volatility chop
+5. Crash and recovery
+```
+
+Для каждого сценария сравниваются:
+
+* final NAV;
+* max drawdown;
+* Sharpe ratio;
+* number of rebalances;
+* total funding cost;
+* total gas and slippage costs;
+* hedge error;
+* health factor.
+
+Monte Carlo results используются как robustness check.
+
+## 10. Risk management
+
+### 10.1. Основные риски стратегии
+
+Стратегия несёт несколько типов риска:
+
+1. **Impermanent loss risk**
+   LP-позиция может проигрывать buy & hold при сильном изменении цены ETH.
+
+2. **Funding risk**
+   Стоимость займа WETH в Aave может оказаться выше дохода от LP fees.
+
+3. **Liquidation risk**
+   Если стоимость debt относительно collateral становится слишком высокой, Aave-позиция может приблизиться к liquidation threshold.
+
+4. **Execution risk**
+   Gas и slippage могут съесть выгоду от ребалансировки.
+
+5. **Rebalance risk**
+   Слишком частый rebalance увеличивает costs, слишком редкий rebalance оставляет большой directional exposure.
+
+6. **Idle token risk**
+   Часть капитала может лежать без работы и ухудшать capital efficiency.
+
+7. **Liquidity risk**
+   При падении ликвидности в пуле сделки могут исполняться с высоким slippage.
+
+### 10.2. Rebalance caller
+
+В production-логике `rebalance()` должен вызываться внешним исполнителем.
+
+Возможные варианты:
+
+* собственный keeper bot;
+* публичная keeper-инфраструктура;
+* permissionless вызов функции любым пользователем;
+* полуавтоматический manual rebalance.
+
+В рамках backtest используется deterministic rebalance:
+
+```text
+На каждом timestamp стратегия проверяет условия rebalance.
+Если threshold и risk checks выполнены, rebalance считается исполненным.
+```
+
+Это допущение явно отделяет backtest от production deployment. В production нужно дополнительно учитывать задержки исполнения, MEV, failed transactions и keeper incentives.
+
+### 10.3. Circuit breaker
+
+Circuit breaker нужен, чтобы стратегия не увеличивала debt в опасных рыночных условиях.
+
+Circuit breaker активируется, если выполняется хотя бы одно условие:
+
+```text
+abs(ETH_return_t) > max_price_jump
+pool_liquidity_t < min_liquidity
+health_factor_t < min_health_factor
+Aave_WETH_borrow_APY_t > max_borrow_apy
+estimated_slippage_t > max_slippage
+data_quality_flag_t = bad
+```
+
+Когда circuit breaker активен:
+
+```text
+- стратегия не увеличивает WETH debt;
+- стратегия может частично погасить debt;
+- новые LP entries не выполняются;
+- событие записывается в backtest logs;
+- NAV продолжает считаться с учётом текущих позиций.
+```
+
+Circuit breaker не делает стратегию безрисковой, но ограничивает действия, которые могут резко увеличить liquidation или execution risk.
+
+### 10.4. LTV и health factor
+
+Для Aave-позиции отслеживаются:
+
+```text
+LTV_t = DebtValue_t / CollateralValue_t
+```
+
+И health factor:
+
+```text
+HealthFactor_t =
+CollateralValue_t × LiquidationThreshold / DebtValue_t
+```
+
+Базовое ограничение:
+
+```text
+min_health_factor = 1.5
+```
+
+Если health factor падает ниже заданного уровня, стратегия:
+
+1. не увеличивает WETH debt;
+2. может купить WETH и погасить часть debt;
+3. записывает risk event;
+4. может временно остановить rebalance.
+
+### 10.5. Idle tokens
+
+Idle tokens — это активы, которые находятся внутри стратегии, но не используются продуктивно.
+
+В нашем проекте idle tokens могут быть:
+
+* USDC, который не внесён в LP и не deposited в Aave;
+* WETH, который остался после rebalance и не использован для repay;
+* ETH/USDC leftovers после добавления ликвидности;
+* USDC после продажи borrowed WETH, если он не используется как collateral или reserve.
+
+Idle value считается как:
+
+```text
+Idle_t = IdleUSDC_t + IdleWETH_t × ETH_price_t
+```
+
+Idle ratio:
+
+```text
+IdleRatio_t = Idle_t / NAV_t
+```
+
+Базовое ограничение:
+
+```text
+idle_ratio_limit = 5%
+```
+
+Если idle ratio становится выше лимита, это означает, что стратегия использует капитал неэффективно. В результатах idle ratio показывается отдельно.
+
+### 10.6. Gas-aware rebalance
+
+Rebalance выполняется только если ожидаемая польза от корректировки hedge оправдывает transaction costs.
+
+Условие:
+
+```text
+expected_rebalance_benefit > gas_cost + slippage_cost
+```
+
+Если hedge error превышает threshold, но notional ребалансировки слишком мал, стратегия может пропустить rebalance. Это защищает backtest от нереалистично частой торговли.
+
+
+
+### 10.7. Slippage limits
+
+Для каждой сделки считается slippage cost:
+
+```text
+slippage_cost = trade_notional × slippage_bps / 10,000
+```
+
+Если estimated slippage превышает допустимый лимит, стратегия не выполняет rebalance.
+
+Это важно для реалистичности, потому что Aave hedge требует swap-операций:
+
+* borrowed WETH → USDC;
+* USDC → WETH для repay.
+
+
+
+## 11. Results interpretation
+
+> Этот раздел заполняется после запуска historical backtest и Monte Carlo. Ниже структура, которую нужно оставить в whitepaper и заполнить фактическими числами.
+
+### 11.1. Summary of results
+
+В этом разделе сравниваются четыре стратегии:
+
+1. Buy & Hold 50/50 ETH/USDC;
+2. plain Uniswap V2 ETH/USDC LP;
+3. LP with fixed initial hedge;
+4. dynamic Aave-hedged LP.
+
+Итоговая таблица:
+
+```text
+| Strategy | Final NAV | Net PnL | Ann. Return | Sharpe | Max DD | Turnover | Total Costs |
+||:|:|:|:|:|:|:|
+| Buy & Hold | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| Plain LP | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| Fixed Hedge LP | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| Dynamic Aave Hedge LP | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+```
+
+Главный вопрос:
+
+```text
+Побеждает ли dynamic Aave-hedged LP стратегию plain Uniswap V2 LP после учёта costs?
+```
+
+### 11.2. Equity curve interpretation
+
+Equity curve показывает динамику NAV стратегий во времени.
+
+Если dynamic hedge показывает более плавную equity curve, это означает, что стратегия действительно снижает directional ETH exposure.
+
+Если dynamic hedge отстаёт от plain LP, нужно проверить:
+
+* был ли рынок сильным uptrend;
+* были ли слишком высокие borrow costs;
+* были ли слишком частые rebalances;
+* насколько gas и slippage съели LP fee income.
+
+### 11.3. Drawdown interpretation
+
+Max drawdown показывает, насколько сильно стратегия проседала относительно предыдущего пика.
+
+Ожидаемый результат:
+
+```text
+Dynamic Aave hedge должен иметь меньший max drawdown, чем plain LP, особенно в downtrend или high-volatility regimes.
+```
+
+Если max drawdown не снижается, возможные причины:
+
+* hedge ratio слишком низкий;
+* rebalance слишком редкий;
+* Aave debt создаёт дополнительный риск;
+* LP fees не компенсируют costs;
+* circuit breaker срабатывает слишком поздно.
+
+
+
+### 11.4. PnL decomposition
+
+PnL decomposition показывает, какие компоненты сделали стратегию прибыльной или убыточной.
+
+Основные компоненты:
+
+```text
+Net PnL =
+LP fees
+- Impermanent loss
+- Aave borrow cost
++ Aave supply yield
+- Gas costs
+- Slippage costs
+```
+
+Если стратегия проигрывает plain LP, нужно определить, какой компонент стал главным источником потерь:
+
+* слишком высокий Aave borrow cost;
+* слишком большие gas costs;
+* слишком частая ребалансировка;
+* недостаточный LP fee income;
+* слишком большой hedge ratio.
+
+Если стратегия выигрывает plain LP, нужно показать, за счёт чего:
+
+* снижение ETH directional exposure;
+* меньший drawdown;
+* достаточный LP fee income;
+* адекватная частота rebalance;
+* умеренный funding cost.
+
+
+
+### 11.5. Hedge quality
+
+Качество hedge оценивается через сравнение:
+
+```text
+LP_ETH_delta_t
+vs
+borrowed_WETH_t
+```
+
+И через hedge error:
+
+```text
+hedge_error_t =
+abs(target_weth_debt_t - current_weth_debt_t) / LP_ETH_delta_t
+```
+
+Если hedge error часто высокий, значит стратегия недостаточно хорошо поддерживает target exposure.
+
+Возможные причины:
+
+* слишком высокий rebalance threshold;
+* circuit breaker часто блокирует rebalance;
+* gas-aware rule пропускает мелкие ребалансировки;
+* Aave health factor ограничивает возможность увеличить debt.
+
+
+
+### 11.6. Regime-level interpretation
+
+Результаты нужно отдельно интерпретировать по режимам.
+
+#### ETH uptrend
+
+В сильном uptrend стратегия может отставать от buy & hold, потому что:
+
+* LP продаёт ETH по мере роста цены;
+* hedge создаёт short ETH exposure;
+* borrow WETH становится дороже в USDC-выражении.
+
+#### ETH downtrend
+
+В downtrend hedge должен помогать, потому что short ETH exposure компенсирует часть потерь LP-позиции.
+
+#### Sideways market
+
+В боковом рынке стратегия потенциально наиболее сильна:
+
+* LP собирает fees;
+* impermanent loss ограничен;
+* hedge не слишком дорогой;
+* directional exposure ниже, чем у plain LP.
+
+#### High-volatility chop
+
+В high-volatility chop результат зависит от баланса:
+
+```text
+LP fees vs rebalance costs + funding costs
+```
+
+Если trading volume высокий, LP fees могут компенсировать costs. Если же rebalance слишком частый, стратегия может проиграть.
+
+
+
+### 11.7. Monte Carlo interpretation
+
+Monte Carlo stress tests используются для проверки robustness.
+
+Нужно сравнить:
+
+```text
+- средний Final NAV;
+- медианный Final NAV;
+- worst-case percentile;
+- max drawdown;
+- частоту circuit breaker events;
+- средний hedge error;
+- средний health factor.
+```
+
+Если стратегия показывает лучший downside profile, но не всегда лучший final PnL, это всё равно важный результат. Тогда вывод формулируется как:
+
+```text
+Стратегия не создаёт бесплатную доходность, но может улучшать профиль риска plain LP в отдельных режимах.
+```
+
+
+
+### 11.8. Final interpretation template
+
+После получения результатов финальный вывод можно оформить так:
+
+```text
+На историческом периоде dynamic Aave-hedged LP [превзошла / не превзошла] plain Uniswap V2 LP по final NAV. При этом стратегия показала [меньший / больший] max drawdown и [лучший / худший] Sharpe ratio.
+
+Основным источником доходности были LP fees. Основными издержками стали Aave borrow cost, gas и slippage. Результаты показывают, что hedge имеет смысл в режимах, где снижение directional exposure компенсирует стоимость funding и execution.
+
+Таким образом, гипотеза [подтверждается / частично подтверждается / не подтверждается] для выбранного периода и параметров.
+```
+
+
+
+## 12. References
+
+### 12.1. Protocol documentation
+
+1. **Uniswap V2 documentation / Uniswap Labs materials**
+   Используется для описания логики Uniswap V2 LP, full-range liquidity, fee tier и роли liquidity providers.
+
+2. **Uniswap V2 whitepaper**
+   Используется для описания constant product AMM, формулы (x \cdot y = k), LP pricing и механики пула.
+
+3. **Aave V3 documentation**
+   Используется для описания lending/borrowing, collateral, debt, health factor, liquidation threshold и liquidation risk.
+
+4. **Aave Health Factor and Liquidations documentation**
+   Используется для формулы health factor и объяснения liquidation risk.
+
+5. **fractal-defi documentation / GitHub repository**
+   Используется как основной backtesting framework. В проекте применяются сущности Uniswap V2 LP и Aave для воспроизводимой реализации стратегии.
+
+
+
+### 12.2. Data sources
+
+6. **The Graph / Uniswap V2 subgraph data**
+   Используется для получения данных по Uniswap V2 pool: TVL, volume, liquidity и fees.
+
+7. **Aave V3 API / GraphQL data**
+   Используется для получения WETH borrow APY и USDC supply APY.
+
+8. **External ETH/USDC price source**
+   Используется для проверки price series и оценки ETH-denominated exposure.
+
+
+
+### 12.3. Academic and technical materials
+
+9. **Impermanent loss explainers and AMM research materials**
+   Используются для интерпретации LP payoff, negative gamma exposure и сравнения LP с buy & hold.
+
+10. **AMM liquidity provision research**
+    Используется для объяснения trade-off между fee income и adverse selection / impermanent loss.
+
+
+
+### 12.4. Previous internal work
+
+11. **Solidity vault prototype: Impermanent Loss Hedging Vault**
+    Используется как предыдущий prototype стратегии Uniswap V2 ETH/USDC LP + Aave hedge.
+
+12. **Previous Uniswap V3 hedge homework**
+    Используется как источник опыта по backtesting, hedge logic и regime analysis.
+
+13. **Aave DeFi EDA notebook**
+    Используется для мотивации выбора Aave V3 и описания lending/borrowing data.
+
+
+
+## 13. LLM transparency
+
+### 13.1. Purpose of LLM usage
+
+LLM использовалась как вспомогательный инструмент для:
+
+* структурирования проекта;
+* составления черновика whitepaper;
+* формулировки research questions;
+* подготовки pseudocode;
+* составления checklist требований;
+* помощи с архитектурой репозитория;
+* scaffolding кода;
+* формулировки limitations и risk management.
+
+LLM не используется как самостоятельный источник истины для финальных результатов.
+
+
+
+### 13.2. Human contribution
+
+Авторы проекта самостоятельно принимают и проверяют ключевые решения:
+
+* выбор темы;
+* выбор стратегии;
+* выбор Uniswap V2 вместо Uniswap V3;
+* выбор Aave V3 как hedge venue;
+* выбор baselines;
+* выбор параметров backtest;
+* запуск кода;
+* проверка результатов;
+* интерпретация метрик;
+* финальные выводы.
+
+
+
+### 13.3. Validation process
+
+Чтобы снизить риск ошибок, возникших из-за LLM-generated content, в проекте используется manual validation:
+
+1. Формулы проверяются через unit tests.
+2. Accounting проверяется через отдельные tests.
+3. Rebalance rule фиксируется до просмотра результатов.
+4. Все costs явно включаются в NAV.
+5. Idle tokens отдельно отслеживаются.
+6. Backtest сравнивается с несколькими baseline.
+7. Финальные выводы делаются только после получения результатов.
+8. Все спорные assumptions фиксируются в `transparency/design_decisions.md`.
+
+
+
+### 13.4. Transcript
+
+Для воспроизводимости в репозиторий добавляется файл:
+
+```text
+transparency/llm_transcript.md
+```
+
+В нём сохраняется полный или сокращённый чат-транскрипт работы с LLM.
+
+Также добавляется файл:
+
+```text
+transparency/human_contributions.md
+```
+
+В нём фиксируется, какие части проекта были выполнены авторами вручную.
+
+
+
+### 13.5. Limitations of LLM assistance
+
+LLM могла предложить некорректные формулы, неполные assumptions или слишком оптимистичную интерпретацию стратегии. Поэтому все ключевые элементы проекта должны быть проверены вручную:
+
+* данные;
+* параметры;
+* формулы;
+* код;
+* метрики;
+* графики;
+* выводы.
+
+Финальный результат проекта основывается не на утверждениях LLM, а на воспроизводимом backtest и проверяемой логике стратегии.
+
