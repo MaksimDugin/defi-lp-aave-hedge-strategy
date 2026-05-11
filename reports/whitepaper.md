@@ -6,7 +6,7 @@
 
 Стратегия сравнивается с buy & hold 50/50 ETH/USDC, plain Uniswap V2 LP и LP с fixed initial hedge. Проверка проводится на исторических данных и через Monte Carlo stress tests для разных рыночных режимов.
 
----
+
 
 ## 2. Постановка проблемы
 
@@ -14,7 +14,7 @@
 
 Цель проекта — проверить, может ли частичный hedge через Aave V3 улучшить результат plain Uniswap V2 LP. Для этого стратегия занимает WETH под USDC collateral и использует borrowed WETH как short ETH exposure против ETH-delta LP-позиции.
 
----
+
 
 ## 3. Гипотеза стратегии
 
@@ -22,7 +22,7 @@
 
 Ожидается, что стратегия будет лучше работать в боковых и умеренно волатильных режимах, где комиссионный доход LP способен компенсировать Aave borrow cost, gas costs и slippage. В сильном тренде стратегия может уступать buy & hold и даже plain LP из-за стоимости хеджа и отрицательной gamma LP-позиции.
 
----
+
 
 ## 4. Инструменты стратегии
 
@@ -34,7 +34,7 @@
 - WETH — borrowed asset, используемый для short ETH exposure;
 - `fractal-defi` — библиотека для реализации воспроизводимого backtest.
 
----
+
 
 ## 5. Связь с предыдущими проектами
 
@@ -44,7 +44,7 @@
 
 Ниже готовые разделы для вставки в `reports/whitepaper.md` после раздела **5. Связь с предыдущими проектами**.
 
----
+
 
 ## 6. Формальное описание стратегии
 
@@ -63,31 +63,31 @@ Borrowed WETH считается реальным short ETH: предполаг�
 
 Uniswap V2 использует constant product AMM:
 
-\[
+$$
 x_t y_t = k_t,
-\]
+$$
 
 где:
 
-- \(x_t\) — количество ETH в пуле;
-- \(y_t\) — количество USDC в пуле;
-- \(k_t\) — constant product;
-- \(P_t\) — цена ETH в USDC.
+- $x_t$ — количество ETH в пуле;
+- $y_t$ — количество USDC в пуле;
+- $k_t$ — constant product;
+- $P_t$ — цена ETH в USDC.
 
 Для симметричной LP-позиции стоимость позиции можно приближённо записать как:
 
-\[
+$$
 V_{LP,t} = 2L\sqrt{P_t},
-\]
+$$
 
-где \(L\) — параметр ликвидности, связанный с размером позиции.
+где $L$ — параметр ликвидности, связанный с размером позиции.
 
 ETH-delta LP-позиции определяется как производная стоимости LP по цене ETH:
 
-\[
+$$
 \Delta_{LP,t} = \frac{\partial V_{LP,t}}{\partial P_t}
 = \frac{L}{\sqrt{P_t}}.
-\]
+$$
 
 На практике для Uniswap V2 эту дельту можно интерпретировать проще: она примерно равна количеству ETH, которое находится внутри LP-позиции стратегии в данный момент времени.
 
@@ -97,27 +97,27 @@ ETH-delta LP-позиции определяется как производна
 
 Целевой размер WETH debt определяется как:
 
-\[
+$$
 D^{target}_{WETH,t} = h \cdot \Delta_{LP,t},
-\]
+$$
 
 где:
 
-- \(D^{target}_{WETH,t}\) — целевой объём borrowed WETH;
-- \(h\) — hedge ratio;
-- \(\Delta_{LP,t}\) — ETH-delta LP-позиции.
+- $D^{target}_{WETH,t}$ — целевой объём borrowed WETH;
+- $h$ — hedge ratio;
+- $\Delta_{LP,t}$ — ETH-delta LP-позиции.
 
 Базовое значение:
 
-\[
+$$
 h = 0.75.
-\]
+$$
 
 Для sensitivity analysis дополнительно рассматривается:
 
-\[
+$$
 h \in \{0.50, 0.75\}.
-\]
+$$
 
 ### 6.4. Rebalance rule
 
@@ -125,26 +125,26 @@ h \in \{0.50, 0.75\}.
 
 Hedge error считается как:
 
-\[
+$$
 HE_t =
 \frac{
 |D^{target}_{WETH,t} - D^{current}_{WETH,t}|
 }{
 \Delta_{LP,t}
 }.
-\]
+$$
 
 Если hedge error превышает заданный threshold, стратегия выполняет rebalance:
 
-\[
+$$
 HE_t > \theta.
-\]
+$$
 
 Базовое значение threshold:
 
-\[
+$$
 \theta = 10\%.
-\]
+$$
 
 Если текущий WETH debt ниже целевого, стратегия занимает дополнительный WETH через Aave V3 и продаёт его в USDC. Если текущий WETH debt выше целевого, стратегия покупает WETH за USDC и погашает часть долга.
 
@@ -152,34 +152,34 @@ HE_t > \theta.
 
 Стоимость стратегии считается в USDC. Полный NAV включает LP-позицию, Aave collateral, Aave debt, idle tokens и накопленные costs:
 
-\[
+$$
 NAV_t =
 V_{LP,t}
 + C_{Aave,t}
 - D_{Aave,t}
 + Idle_t
 - Costs_t.
-\]
+$$
 
 Где:
 
-- \(V_{LP,t}\) — стоимость LP-позиции;
-- \(C_{Aave,t}\) — стоимость collateral в Aave;
-- \(D_{Aave,t}\) — стоимость borrowed WETH debt;
-- \(Idle_t\) — стоимость неиспользуемых активов;
-- \(Costs_t\) — накопленные gas, slippage и transaction costs.
+- $V_{LP,t}$ — стоимость LP-позиции;
+- $C_{Aave,t}$ — стоимость collateral в Aave;
+- $D_{Aave,t}$ — стоимость borrowed WETH debt;
+- $Idle_t$ — стоимость неиспользуемых активов;
+- $Costs_t$ — накопленные gas, slippage и transaction costs.
 
 Idle tokens учитываются отдельно, чтобы избежать скрытой неэффективности капитала. Idle value считается как:
 
-\[
+$$
 Idle_t = IdleUSDC_t + IdleWETH_t \cdot P_t.
-\]
+$$
 
 Idle ratio:
 
-\[
+$$
 IdleRatio_t = \frac{Idle_t}{NAV_t}.
-\]
+$$
 
 Если idle ratio становится слишком высоким, стратегия считается менее capital-efficient.
 
@@ -187,7 +187,7 @@ IdleRatio_t = \frac{Idle_t}{NAV_t}.
 
 Итоговый PnL стратегии раскладывается на несколько компонентов:
 
-\[
+$$
 NetPnL =
 LPFees
 - ImpermanentLoss
@@ -195,7 +195,7 @@ LPFees
 + AaveSupplyYield
 - GasCosts
 - SlippageCosts.
-\]
+$$
 
 Основной источник доходности стратегии — комиссии Uniswap V2. Основные источники потерь — impermanent loss, стоимость займа WETH в Aave, gas costs, slippage и издержки ребалансировки.
 
@@ -220,7 +220,7 @@ LPFees
 5. **Idle token accounting**  
    Все неиспользуемые токены включаются в NAV и отдельно отслеживаются через idle ratio.
 
----
+
 
 ## 7. Pseudocode
 
@@ -378,7 +378,7 @@ Compare with baselines:
     LP with fixed initial hedge
 ````
 
----
+
 
 ## 8. Baseline comparison
 
@@ -390,19 +390,19 @@ Compare with baselines:
 
 Стоимость портфеля в момент времени (t):
 
-\[
+$$
 V^{BH}*t = q*{ETH,0} \cdot P_t + q_{USDC,0},
-\]
+$$
 
 где:
 
-* \(q_{ETH,0}\) — начальное количество ETH;
-* \(q_{USDC,0}\) — начальное количество USDC;
-* \(P_t\) — цена ETH в USDC.
+* $q_{ETH,0}$ — начальное количество ETH;
+* $q_{USDC,0}$ — начальное количество USDC;
+* $P_t$ — цена ETH в USDC.
 
 Этот baseline показывает, как стратегия выглядит по сравнению с простой пассивной экспозицией к ETH/USDC без impermanent loss, funding costs и transaction costs.
 
----
+
 
 ### 8.2. Baseline 2: Plain Uniswap V2 ETH/USDC LP
 
@@ -410,17 +410,17 @@ V^{BH}*t = q*{ETH,0} \cdot P_t + q_{USDC,0},
 
 Стоимость plain LP:
 
-\[
+$$
 V^{LP}_t = LPValue_t + LPFees_t - EntryExitCosts_t.
-\]
+$$
 
 Plain LP получает комиссионный доход, но несёт impermanent loss. Этот baseline является главным для проекта, потому что наша стратегия является модификацией обычной LP-стратегии.
 
 Основной вопрос сравнения:
 
-\[
+$$
 V^{HedgedLP}_t > V^{PlainLP}_t?
-\]
+$$
 
 Иначе говоря, проверяется, способен ли Aave hedge улучшить результат обычного LP после учёта funding, gas, slippage и ребалансировок.
 
@@ -430,15 +430,15 @@ V^{HedgedLP}_t > V^{PlainLP}_t?
 
 Целевой начальный hedge:
 
-\[
+$$
 D^{fixed}*{WETH,0} = h \cdot \Delta*{LP,0}.
-\]
+$$
 
 Для всех последующих моментов времени:
 
-\[
+$$
 D^{fixed}*{WETH,t} = D^{fixed}*{WETH,0}.
-\]
+$$
 
 Этот baseline нужен, чтобы отделить эффект самого hedge от эффекта динамической ребалансировки. Если dynamic hedge показывает лучший результат, чем fixed hedge, значит ребалансировка добавляет ценность. Если fixed hedge оказывается не хуже, значит частая ребалансировка может быть экономически неоправданной из-за gas и slippage.
 
@@ -448,15 +448,15 @@ D^{fixed}*{WETH,t} = D^{fixed}*{WETH,0}.
 
 Целевой debt:
 
-\[
+$$
 D^{target}*{WETH,t} = h \cdot \Delta*{LP,t}.
-\]
+$$
 
 Rebalance выполняется только если:
 
-\[
+$$
 HE_t > \theta.
-\]
+$$
 
 При этом стратегия учитывает:
 
