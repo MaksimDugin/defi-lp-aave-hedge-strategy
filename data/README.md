@@ -1,21 +1,37 @@
-# Описание данных
+# Data README
 
-| Данные | Источник | Частота | Зачем нужны |
-|---|---|---|---|
-| ETH/USDC price | Uniswap V2 / внешний price source | hourly или daily | оценка LP-позиции и hedge debt |
-| Uniswap V2 TVL | The Graph / `fractal-defi` loader | hourly или daily | оценка стоимости LP-позиции |
-| Uniswap V2 volume | The Graph / `fractal-defi` loader | hourly или daily | расчёт комиссионного дохода LP |
-| Uniswap V2 fees | `volume × 0.30%` | hourly или daily | доходность LP от комиссий |
-| Aave V3 WETH borrow APY | Aave V3 / `fractal-defi` loader | hourly или daily | стоимость funding для hedge |
-| Aave V3 USDC supply APY | Aave V3 / `fractal-defi` loader | hourly или daily | доходность collateral |
-| Gas cost | fixed scenario или историческая оценка | на каждую ребалансировку | execution cost |
-| Slippage | фиксированная bps-модель или volume-based estimate | на каждую сделку | execution cost |
+Главный файл для backtest:
 
-## Основные допущения
+```text
+data/processed/market_data.csv
+```
 
-- USDC используется как accounting currency.
-- Borrowed WETH считается short ETH exposure.
-- Комиссия Uniswap V2 принимается равной 0.30%.
-- Если hourly data недоступны или нестабильны, используется daily frequency.
-- Все данные синхронизируются по timestamp.
-- Пропуски удаляются или заполняются только явно описанным способом.
+## Columns
+
+| Column | Type | Description |
+|---|---|---|
+| `timestamp` | datetime UTC | observation timestamp |
+| `eth_price_usdc` | float | ETH price in USDC/USD proxy |
+| `uni_tvl_usd` | float | Uniswap V2 WETH/USDC pool TVL |
+| `uni_volume_usd` | float | pool volume over period |
+| `uni_fees_usd` | float | `uni_volume_usd × 0.003` |
+| `uni_liquidity` | float | Uniswap V2 LP token supply / liquidity proxy |
+| `aave_weth_borrow_rate` | float | WETH borrow rate per period |
+| `aave_usdc_supply_rate` | float | USDC supply rate per period |
+| `gas_cost_usdc` | float | assumed gas cost per rebalance |
+| `regime` | string | market regime label |
+
+## Sources
+
+- ETH price: CoinGecko ETH/USD, used as ETH/USDC proxy.
+- Uniswap V2 WETH/USDC: The Graph / Uniswap V2 subgraph.
+- Aave rates: Aave V3 GraphQL API.
+- Fees: `volume × 0.30%`.
+
+## Frequency
+
+Preferred: hourly.
+
+Fallback: daily.
+
+If hourly data is incomplete, the final whitepaper should explicitly mention the fallback to daily data.
