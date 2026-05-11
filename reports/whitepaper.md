@@ -186,11 +186,11 @@ $$
 $$
 NetPnL =
 LPFees
-- ImpermanentLoss
-- AaveBorrowCost
-+ AaveSupplyYield
-- GasCosts
-- SlippageCosts.
+-ImpermanentLoss
+-AaveBorrowCost
++AaveSupplyYield
+-GasCosts
+-SlippageCosts.
 $$
 
 Основной источник доходности стратегии — комиссии Uniswap V2. Основные источники потерь — impermanent loss, стоимость займа WETH в Aave, gas costs, slippage и издержки ребалансировки.
