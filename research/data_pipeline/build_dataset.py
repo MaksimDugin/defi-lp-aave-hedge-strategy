@@ -23,7 +23,7 @@ def build_market_dataset(config: PipelineConfig) -> pd.DataFrame:
     df = clean_market_data(df)
 
     # Recalculate Uniswap fees from volume to enforce the exact project assumption.
-    df["uni_fees_usd"] = df["uni_volume_usd"] * config.uniswap_fee_rate
+    df["uni_fees_usd"] = df["uni_volume_usd"] * config.uniswap_v2_fee_rate
 
     regime_window = 24 if config.frequency == "hourly" else 7
     df = add_regime_labels(df, window=regime_window)

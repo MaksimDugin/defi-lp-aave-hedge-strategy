@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 # repo/research/data_pipeline/config.py
 # поэтому parents[2] = repo root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROCESSED_ROOT = PROJECT_ROOT / "data" / "processed"
+RAW_ROOT = PROJECT_ROOT / "data" / "raw"
 
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=True)
 
