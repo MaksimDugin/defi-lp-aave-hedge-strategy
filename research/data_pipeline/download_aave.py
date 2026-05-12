@@ -172,7 +172,11 @@ def download_aave_v3_rates(config: PipelineConfig) -> pd.DataFrame:
         direction="backward",
     )
 
-    output["annual_rate_decimal"] = output["annual_rate_decimal"].ffill().fillna(0.0)
+    output["annual_rate_decimal"] = (
+        output["annual_rate_decimal"]
+        .ffill()
+        .bfill()
+    )
 
     weth_borrow_spread = float(os.getenv("AAVE_WETH_BORROW_SPREAD_APY", "0.0"))
     usdc_supply_spread = float(os.getenv("AAVE_USDC_SUPPLY_SPREAD_APY", "0.0"))
