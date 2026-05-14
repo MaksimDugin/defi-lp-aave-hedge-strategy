@@ -11,9 +11,10 @@ def calculate_hedge_error(
     current_weth_debt: float,
     target_weth_debt: float,
 ) -> float:
-    
-    error = abs(current_weth_debt - target_weth_debt) / target_weth_debt
-
+    if target_weth_debt > 0:
+        error = abs(current_weth_debt - target_weth_debt) / target_weth_debt
+    else: 
+        raise ValueError("Target weth debt is not positive! Are you sure everything is right?"); 
     return error
     
 
@@ -37,7 +38,11 @@ def calculate_idle_ratio(
         idle_value: float,
         nav: float,
 ) -> float:
-    idle_ratio = idle_value/ nav
+    if nav > 0:
+        idle_ratio = idle_value/ nav
+    else: 
+        raise ValueError("NAV is not positive! Are you sure everything is right?"); 
+    
     return idle_ratio
 
 
@@ -53,7 +58,12 @@ def calculate_ltv(
         debt_value: float,
         collateral_value: float,
 ) -> float:
-    ltv = debt_value / collateral_value
+    
+    if collateral_value > 0:
+        ltv = debt_value / collateral_value
+    else: 
+        raise ValueError("Collateral_value is not positive! Are you sure everything is right?")
+    
     return ltv
 
 
@@ -62,9 +72,11 @@ def calculate_health_factor(
         liquidation_threshold: float,
         debt_value: float,
 ) -> float:
-
-    health_factor = collateral_value * liquidation_threshold / debt_value
-
+    
+    if debt_value > 0:
+        health_factor = collateral_value * liquidation_threshold / debt_value
+    else:
+        raise ValueError("Debt value is not positive! Are you sure everything is right?")
     return health_factor
 
 
