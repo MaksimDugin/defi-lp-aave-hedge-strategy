@@ -626,7 +626,7 @@ Pool-level fees распределены неравномерно по рыно�
 
 ## 11. Calibration
 
-Калибровка параметров проводится до финального сравнения стратегий. Базовые параметры выбираются из экономической логики стратегии и ограничений risk management, а затем проверяются через sensitivity analysis.
+Калибровка параметров проводится до финального сравнения стратегий. Базовые параметры выбираются из экономической логики стратегии, EDA и ограничений risk management, а затем проверяются через sensitivity analysis и Optuna calibration.
 
 Базовые параметры:
 
@@ -634,25 +634,122 @@ Pool-level fees распределены неравномерно по рыно�
 Initial capital = 100,000 USDC
 LP allocation = 50%
 Aave collateral allocation = 50%
-hedge_ratio = 75%
-rebalance_threshold = 10%
+base hedge_ratio = 75%
+base rebalance_threshold = 10%
 min_health_factor = 1.5
 idle_ratio_limit = 5%
 slippage_bps = 10
 base gas cost = 15 USDC per rebalance
 ```
 
-Параметры для sensitivity analysis:
+Параметры не делятся на «все оптимизируемые». В проекте используется более консервативный подход:
 
 ```text
-hedge_ratio ∈ {0.50, 0.75}
-rebalance_threshold ∈ {5%, 10%, 20%}
-gas_cost ∈ {5, 15, 30} USDC
-slippage_bps ∈ {5, 10, 25}
-funding scenario ∈ {base, conservative, stress}
+1. EDA / data-driven assumptions:
+   - max_price_jump
+   - gas_cost_usdc
+   - slippage_bps
+   - funding proxy
+
+2. Risk policy / protocol constraints:
+   - min_health_factor
+   - max_ltv
+   - liquidation_threshold
+
+3. Strategy-control parameters:
+   - hedge_ratio
+   - rebalance_threshold
 ```
 
-Основная логика calibration: параметры не должны подбираться только для максимизации historical PnL. Они должны оставаться реалистичными с точки зрения execution costs, Aave risk constraints и частоты ребалансировки.
+Оптимизация применяется только к strategy-control параметрам. Gas, slippage, LTV, health factor и funding assumptions не подбираются для максимизации historical PnL, потому что они отражают условия исполнения и risk policy.
+
+### 11.1. Использование EDA для ограничения calibration space
+
+EDA использовалась не только для описания данных, но и для выбора реалистичных границ параметров.
+
+Во-первых, hourly ETH returns имеют fat tails: минимальное hourly movement около -11.6%, максимальное около +9.6%. Поэтому circuit breaker threshold должен быть достаточно высоким, чтобы не срабатывать на обычный шум, но достаточно низким, чтобы блокировать увеличение debt во время stress move. Базовое значение `max_price_jump = 10%` связано с этой частью EDA.
+
+Во-вторых, regime analysis показал, что directional regimes часто короткие: медианная длина uptrend/downtrend segments около 2 часов. Это означает, что слишком частый rebalance будет реагировать на шум и создавать издержки. Поэтому `rebalance_threshold` калибруется в умеренном диапазоне, а не близко к нулю.
+
+В-третьих, fee income сильно сконцентрирован в high-volume stress periods. Это поддерживает саму идею hedge: именно в периоды высокого объёма стратегия получает комиссии, но одновременно сталкивается с высоким directional risk.
+
+### 11.2. Continuous Optuna calibration
+
+После grid/sensitivity проверки была проведена continuous calibration через Optuna. Оптимизировались два параметра:
+
+```text
+hedge_ratio ∈ [0.40, 1.00]
+rebalance_threshold ∈ [0.05, 0.20]
+```
+
+Objective function максимизировала risk-adjusted score. Score учитывает:
+
+```text
+- Sharpe ratio dynamic strategy;
+- annualized return;
+- max drawdown penalty;
+- turnover penalty;
+- transaction costs penalty;
+- штраф за отсутствие dynamic behaviour, если number_of_rebalances = 0.
+```
+
+Цель такой calibration — не подобрать параметры, которые максимизируют только final NAV, а найти версию dynamic hedge с хорошим балансом между доходностью, downside protection и execution costs.
+
+Всего было выполнено 800 Optuna trials. Лучший trial:
+
+```text
+Best trial = 361
+Best value = 0.631080
+hedge_ratio = 0.849989
+rebalance_threshold = 0.069659
+```
+
+Top-10 trials оказались устойчиво сконцентрированы около:
+
+```text
+hedge_ratio ≈ 0.85
+rebalance_threshold ≈ 6.9%–7.0%
+number_of_rebalances = 13
+```
+
+| Trial | Score | Hedge ratio | Rebalance threshold | Final NAV | Sharpe | Max DD | Turnover | Rebalances | Total costs |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 361 | 0.631080 | 0.849989 | 0.069659 | 103,761.01 | 0.6328 | -2.04% | 22,182.97 | 13 | 217.18 |
+| 624 | 0.631078 | 0.849982 | 0.069439 | 103,761.01 | 0.6328 | -2.04% | 22,182.79 | 13 | 217.18 |
+| 352 | 0.631071 | 0.849958 | 0.069487 | 103,761.03 | 0.6328 | -2.04% | 22,182.15 | 13 | 217.18 |
+| 245 | 0.631062 | 0.849927 | 0.069724 | 103,761.04 | 0.6327 | -2.05% | 22,181.35 | 13 | 217.18 |
+| 495 | 0.630973 | 0.849623 | 0.069518 | 103,761.19 | 0.6327 | -2.05% | 22,173.40 | 13 | 217.17 |
+| 242 | 0.630946 | 0.849531 | 0.069574 | 103,761.23 | 0.6326 | -2.05% | 22,171.01 | 13 | 217.17 |
+| 183 | 0.630777 | 0.848960 | 0.069554 | 103,761.50 | 0.6324 | -2.06% | 22,156.11 | 13 | 217.16 |
+| 440 | 0.630158 | 0.849997 | 0.069973 | 103,753.85 | 0.6319 | -2.05% | 22,175.76 | 13 | 217.18 |
+| 174 | 0.630121 | 0.849868 | 0.069735 | 103,753.92 | 0.6318 | -2.05% | 22,172.40 | 13 | 217.17 |
+| 80 | 0.630120 | 0.849864 | 0.069741 | 103,753.92 | 0.6318 | -2.05% | 22,172.31 | 13 | 217.17 |
+
+Calibration plots сохраняются в:
+
+```text
+reports/figures/calibration_trials_scatter.png
+reports/figures/calibration_heatmap_sharpe.png
+reports/figures/calibration_heatmap_drawdown.png
+```
+
+### 11.3. Calibration result interpretation
+
+Калибровка сместила параметры относительно базовой версии:
+
+```text
+Base strategy:
+hedge_ratio = 0.75
+rebalance_threshold = 10%
+
+Calibrated strategy:
+hedge_ratio ≈ 0.85
+rebalance_threshold ≈ 7%
+```
+
+Экономически это означает, что лучшая dynamic-версия сильнее хеджирует ETH exposure и чаще корректирует WETH debt. Она платит за это большим turnover и более высокими transaction costs, но получает лучший downside profile.
+
+Важно, что calibrated dynamic hedge всё равно не становится стратегией максимизации absolute return. На выбранном историческом периоде fixed hedge остаётся сильным baseline по final NAV и Sharpe. Dynamic hedge после калибровки ценен прежде всего как risk-management layer: он снижает max drawdown до около -2.04%.
 
 ---
 
@@ -1192,16 +1289,17 @@ slippage_cost = trade_notional × slippage_bps / 10,000
 3. LP with fixed initial hedge;
 4. dynamic Aave-hedged LP.
 
-Итоговая таблица:
+Итоговая таблица historical backtest и calibrated run:
 
-| Strategy | Final NAV | Net PnL | Ann. Return | Sharpe | Max DD | Turnover | Total Costs |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Buy & Hold | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| Plain LP | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| Fixed Hedge LP | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| Dynamic Aave Hedge LP | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| Strategy | Final NAV | Net PnL | Ann. Return | Sharpe | Max DD | Turnover | Rebalances | Total Costs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Buy & Hold 50/50 | 94,137.82 | -5,862.18 | -5.88% | -0.01 | -32.48% | 0.00 | 0 | 0.00 |
+| Fractal Plain Uniswap V2 LP | 104,405.33 | 4,555.33 | 4.58% | 0.30 | -35.70% | 0.00 | 0 | 0.00 |
+| Fractal Fixed Hedge LP | 105,835.60 | 5,910.60 | 5.93% | 0.79 | -5.57% | 0.00 | 0 | 0.00 |
+| Base Dynamic Aave Hedge LP | 102,780.79 | 2,855.79 | 2.87% | 0.44 | -4.11% | 19,346.97 | 8 | 139.35 |
+| Calibrated Dynamic Aave Hedge LP | 103,761.01 | 3,836.01 | 3.85% | 0.63 | -2.04% | 22,182.97 | 13 | 217.18 |
 
-Главный вопрос: побеждает ли dynamic Aave-hedged LP стратегию plain Uniswap V2 LP после учёта costs?
+Главный вопрос: побеждает ли dynamic Aave-hedged LP стратегию plain Uniswap V2 LP после учёта costs? На данном historical sample calibrated dynamic hedge не максимизирует final NAV, но существенно улучшает downside metrics и risk-adjusted profile относительно plain LP.
 
 
 ### 15.1.1. Фактические результаты historical backtest на fractal-defi
@@ -1233,6 +1331,40 @@ python -m strategy.fractal_runner \
 4. Dynamic hedge выполнил 8 ребалансировок, создал turnover около 19,347 USDC и понёс total costs около 139 USDC. Это показывает, что dynamic risk control не является бесплатным: часть доходности теряется на execution costs и корректировку WETH debt.
 
 Итоговый вывод по historical backtest: гипотеза подтверждается частично. Aave hedge не максимизирует absolute return, но резко снижает volatility и drawdown относительно plain LP. На данном периоде fixed hedge оказался эффективнее dynamic hedge по final NAV и Sharpe, а dynamic hedge дал наиболее контролируемый drawdown profile.
+
+
+Дополнительно была запущена calibrated версия dynamic strategy после Optuna calibration. Лучшие параметры:
+
+```text
+hedge_ratio ≈ 0.85
+rebalance_threshold ≈ 7%
+```
+
+Результаты calibrated dynamic Aave-hedged LP:
+
+| Strategy | Final NAV | Net PnL | Ann. Return | Ann. Volatility | Sharpe | Max DD | Turnover | Rebalances | Total Costs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Calibrated Dynamic Aave Hedged LP | 103,761.01 | 3,836.01 | 3.85% | 6.28% | 0.63 | -2.04% | 22,182.97 | 13 | 217.18 |
+
+Сравнение calibrated dynamic strategy с базовой dynamic strategy показывает улучшение risk-adjusted profile:
+
+```text
+Base dynamic:
+Final NAV = 102,780.79
+Sharpe = 0.44
+Max drawdown = -4.11%
+Rebalances = 8
+Total costs = 139.35 USDC
+
+Calibrated dynamic:
+Final NAV = 103,761.01
+Sharpe = 0.63
+Max drawdown = -2.04%
+Rebalances = 13
+Total costs = 217.18 USDC
+```
+
+Калиброванная стратегия увеличивает turnover и transaction costs, но снижает max drawdown примерно в два раза относительно base dynamic configuration. Это подтверждает, что dynamic hedge работает прежде всего как инструмент downside protection, а не как механизм максимизации absolute return.
 
 ### 15.2. Equity curve interpretation
 
@@ -1398,6 +1530,13 @@ Monte Carlo stress tests используются для проверки robust
 
 ---
 
+
+После Optuna calibration стратегия была улучшена с точки зрения risk-adjusted metrics. Базовая dynamic configuration использовала `hedge_ratio = 0.75` и `rebalance_threshold = 10%`. Калиброванная версия использует `hedge_ratio ≈ 0.85` и `rebalance_threshold ≈ 7%`.
+
+Это изменение делает hedge более агрессивным и повышает частоту корректировки debt. Результат: max drawdown снижается с -4.11% до -2.04%, Sharpe ratio повышается с 0.44 до 0.63. При этом final NAV остаётся ниже, чем у fixed hedge, а transaction costs возрастают. Поэтому improvement формулируется не как «dynamic hedge всегда лучше», а как «calibrated dynamic hedge даёт лучший downside control при умеренной стоимости исполнения».
+
+---
+
 ## 17. Limitations
 
 Результаты проекта следует интерпретировать с учётом нескольких ограничений.
@@ -1411,6 +1550,11 @@ Monte Carlo stress tests используются для проверки robust
 В-четвёртых, backtest не моделирует все production risks: MEV, failed transactions, keeper delay, oracle manipulation, smart contract exploits и реальную динамику gas price.
 
 В-пятых, Monte Carlo scenarios являются стресс-тестом, а не прогнозом будущей доходности.
+
+---
+
+
+Дополнительное ограничение связано с calibration. Optuna calibration проводится на том же historical sample, поэтому её результаты могут содержать in-sample bias. Чтобы не превращать calibration в overfitting, оптимизируются только два strategy-control параметра: `hedge_ratio` и `rebalance_threshold`. Остальные параметры фиксируются на основании EDA, execution assumptions и risk policy. Финальный вывод поэтому строится не на одном best trial, а на устойчивости топовых trials вокруг `hedge_ratio ≈ 0.85` и `rebalance_threshold ≈ 7%`.
 
 ---
 
