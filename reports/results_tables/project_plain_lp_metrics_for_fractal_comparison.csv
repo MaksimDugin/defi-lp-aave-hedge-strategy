@@ -1,0 +1,2 @@
+strategy_name,final_nav,net_pnl,annualized_return,annualized_volatility,sharpe,max_drawdown,turnover,number_of_rebalances,total_costs,average_health_factor,average_idle_ratio
+plain_uniswap_v2_lp,114874.41431253508,14873.376373453168,0.1491698911576762,0.3457919602886708,0.5753943480934461,-0.32579519390926837,0.0,0,0.0,inf,0.0
