@@ -71,6 +71,55 @@ Forge-тесты проверяют:
 - slippage limits;
 - базовое capital accounting.
 
+
+### 6.1.1. Sepolia prototype deployment
+
+Solidity-прототип был дополнительно задеплоен в Sepolia как mock-based demo environment. Деплой включает mock USDC, mock WETH, mock Uniswap V2 Router/Pair, mock Chainlink ETH/USD oracle, mock Aave Pool и сам `ImpermanentLossHedgingVault`.
+
+Важно: это не production integration с реальными Uniswap V2 и Aave V3 contracts. Цель деплоя — показать on-chain feasibility архитектуры, проверить smoke-test deposit и зафиксировать воспроизводимые адреса прототипа.
+
+Deployment addresses:
+
+| Contract | Address |
+|---|---|
+| Deployer | `0x105a2357d6e6614810296020eBB551Dda6EfaFd9` |
+| MockERC20 / mUSDC | `0x9524e79b9199f6C3777e372db8B4cF0d28Bc3dFa` |
+| MockWETH9 | `0xBDA327305ac766Ef56A6621575f059164D9CD76b` |
+| MockUniswapV2Router02 | `0x43a915c119a0C5e3a1f0E047a6ce646e3627a51a` |
+| MockUniswapV2Pair | `0x1BD44Ff5eAa4402Db5D7efeb91634f377D352416` |
+| MockOracle | `0x9B2752d78A4A9538d4769fc69cC9D77E9AD5Cd7e` |
+| MockAavePool | `0x4A3D8DFA4F691c5a11F1910FFa603646B8DD29c7` |
+| ImpermanentLossHedgingVault | `0xE7BD0aCe788298b8b35e13CC931230EA28028603` |
+
+Smoke-test transaction:
+
+```text
+Deposit tx: 0xfc4c56193cf3feabcd30a1661dd2a6433126a16ccb24dd5aa79c8d980f3efbc9
+```
+
+Smoke-test parameters:
+
+```text
+deposit ETH amount = 0.005 ETH
+deposit USDC amount = 10 mUSDC
+pool price = 2000 USDC / ETH
+```
+
+Post-deposit checks:
+
+```text
+totalShares = 5e15
+getCurrentDelta = 5e15
+getCurrentDebt ≈ 5e15
+getHealthFactorBps = 16000
+getCapitalPosition1e18:
+    lpAssetValue = 20e18
+    debtValue = 10e18
+    netAssetValue = 10e18
+```
+
+Этот smoke test подтверждает, что vault принимает deposit, создаёт LP-like shares, открывает WETH debt hedge через mock Aave Pool и корректно считает базовые accounting/risk values.
+
 ### 6.2. Research backtest: Python / fractal-defi
 
 Python-часть используется для исторического backtest и Monte Carlo stress tests. Она реализует экономическую модель стратегии, сравнивает её с baseline-стратегиями и считает метрики: net PnL, annualized return, Sharpe, max drawdown, turnover, fees, funding costs, gas и slippage.
@@ -430,6 +479,32 @@ data/processed/market_data.csv
 
 Цена ETH/USDC берётся из Binance ETHUSDC historical data. Данные по Uniswap V2 WETH/USDC pool получены через The Graph. Aave funding представлен через SOFR-based proxy, поскольку исторические Aave reserve-specific rates не удалось стабильно получить из публичных источников.
 
+
+### 9.1.1. Финальная реализация backtest через fractal-defi
+
+Финальная версия historical backtest запускается через модуль:
+
+```bash
+python -m strategy.fractal_runner \
+  --data-path data/processed/market_data.csv \
+  --output-dir reports/results_tables
+```
+
+В этой версии `fractal-defi` используется как основной слой моделирования AMM LP-механики. Исторический `market_data.csv` преобразуется в последовательность `Observation`, где каждое наблюдение содержит `UniswapV2LPGlobalState`: цену ETH, TVL, объём торгов, комиссии и liquidity пула. LP-leg стратегий моделируется через `UniswapV2LPEntity`.
+
+Aave-hedge layer реализован поверх fractal LP state: на каждом timestamp стратегия получает LP value и LP ETH delta из fractal-based LP-leg, затем рассчитывает target WETH debt, funding cost, health factor, hedge error, rebalance decision, gas, slippage и итоговый NAV.
+
+Итоговые файлы backtest:
+
+```text
+reports/results_tables/nav_timeseries.csv
+reports/results_tables/metrics.csv
+reports/results_tables/rebalances.csv
+reports/results_tables/pnl_decomposition.csv
+```
+
+Такой подход закрывает требование обязательного использования `fractal-defi`, но оставляет Aave accounting прозрачным и проверяемым, поскольку готовая Aave V3 lending/borrowing entity в используемой версии framework отсутствует.
+
 ### 9.2. Uniswap V2 data
 
 Для Uniswap V2 WETH/USDC pool используются hourly TVL, trading volume, total liquidity и estimated fees. Комиссия Uniswap V2 принимается равной 0.30%, поэтому hourly pool fees рассчитываются как:
@@ -723,6 +798,34 @@ Backtest нужен для проверки, улучшает ли Aave-хедж
 4. dynamic Aave-hedged LP.
 
 Основной benchmark — plain Uniswap V2 LP, потому что наша стратегия является его модификацией.
+
+
+### 13.1.1. Реализация backtest через fractal-defi
+
+Финальный historical backtest реализован как fractal-based pipeline. Модуль `strategy/fractal_runner.py` выполняет следующие шаги:
+
+1. Загружает `data/processed/market_data.csv`.
+2. Преобразует строки датасета в `fractal-defi Observation`.
+3. Для LP-механики использует `UniswapV2LPEntity` и `UniswapV2LPGlobalState`.
+4. Запускает четыре стратегии:
+   - `buy_hold_50_50`;
+   - `fractal_plain_uniswap_v2_lp`;
+   - `fractal_fixed_hedge_lp`;
+   - `fractal_dynamic_aave_hedged_lp`.
+5. Сохраняет `nav_timeseries.csv`, `metrics.csv`, `rebalances.csv` и `pnl_decomposition.csv`.
+
+Ключевое разделение реализации:
+
+```text
+fractal-defi:
+    AMM LP mechanics, LP value, LP state, LP observation flow
+
+project strategy layer:
+    Aave hedge accounting, WETH debt, funding, health factor,
+    circuit breaker, rebalance rule, gas/slippage, NAV decomposition
+```
+
+Это делает backtest воспроизводимым через framework primitives и одновременно сохраняет явное описание Aave-hedge assumptions.
 
 ### 13.2. Начальные условия
 
@@ -1099,6 +1202,37 @@ slippage_cost = trade_notional × slippage_bps / 10,000
 | Dynamic Aave Hedge LP | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
 
 Главный вопрос: побеждает ли dynamic Aave-hedged LP стратегию plain Uniswap V2 LP после учёта costs?
+
+
+### 15.1.1. Фактические результаты historical backtest на fractal-defi
+
+Финальный historical backtest был запущен через `strategy.fractal_runner`. В этой версии AMM LP-leg моделируется через `fractal-defi`, а Aave hedge accounting реализован поверх fractal LP state.
+
+Команда запуска:
+
+```bash
+python -m strategy.fractal_runner \
+  --data-path data/processed/market_data.csv \
+  --output-dir reports/results_tables
+```
+
+Фактические результаты:
+
+| Strategy | Final NAV | Net PnL | Ann. Return | Ann. Volatility | Sharpe | Max DD | Turnover | Rebalances | Total Costs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Buy & Hold 50/50 | 94,137.82 | -5,862.18 | -5.88% | 33.35% | -0.01 | -32.48% | 0.00 | 0 | 0.00 |
+| Fractal Plain Uniswap V2 LP | 104,405.33 | 4,555.33 | 4.58% | 36.17% | 0.30 | -35.70% | 0.00 | 0 | 0.00 |
+| Fractal Fixed Hedge LP | 105,835.60 | 5,910.60 | 5.93% | 7.72% | 0.79 | -5.57% | 0.00 | 0 | 0.00 |
+| Fractal Dynamic Aave Hedged LP | 102,780.79 | 2,855.79 | 2.87% | 7.00% | 0.44 | -4.11% | 19,346.97 | 8 | 139.35 |
+
+Интерпретация результатов:
+
+1. `fractal_plain_uniswap_v2_lp` превзошёл buy & hold по final NAV: 104,405 USDC против 94,138 USDC. Это означает, что на выбранном периоде LP fees и AMM exposure компенсировали часть adverse price dynamics.
+2. `fractal_fixed_hedge_lp` показал лучший final NAV среди LP + hedge стратегий: 105,836 USDC. Также он дал значительно меньший max drawdown, чем plain LP: -5.57% против -35.70%.
+3. `fractal_dynamic_aave_hedged_lp` показал меньший final NAV, чем fixed hedge и plain LP, но сохранил сильный risk-control profile: max drawdown составил -4.11%, annualized volatility — около 7.00%.
+4. Dynamic hedge выполнил 8 ребалансировок, создал turnover около 19,347 USDC и понёс total costs около 139 USDC. Это показывает, что dynamic risk control не является бесплатным: часть доходности теряется на execution costs и корректировку WETH debt.
+
+Итоговый вывод по historical backtest: гипотеза подтверждается частично. Aave hedge не максимизирует absolute return, но резко снижает volatility и drawdown относительно plain LP. На данном периоде fixed hedge оказался эффективнее dynamic hedge по final NAV и Sharpe, а dynamic hedge дал наиболее контролируемый drawdown profile.
 
 ### 15.2. Equity curve interpretation
 

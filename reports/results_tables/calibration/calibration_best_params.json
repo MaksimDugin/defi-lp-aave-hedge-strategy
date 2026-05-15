@@ -1,0 +1,11 @@
+{
+  "objective": "risk_adjusted",
+  "best_value": 0.6310802560039921,
+  "best_params": {
+    "hedge_ratio": 0.8499892802109696,
+    "rebalance_threshold": 0.06965934324744885
+  },
+  "target_strategy": "fractal_dynamic_aave_hedged_lp",
+  "n_trials": 800,
+  "max_drawdown_budget": 0.08
+}
