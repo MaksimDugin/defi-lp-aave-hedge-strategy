@@ -503,6 +503,20 @@ reports/results_tables/rebalances.csv
 reports/results_tables/pnl_decomposition.csv
 ```
 
+Дополнительно после Optuna-калибровки был выполнен отдельный calibrated fractal-based backtest:
+
+```bash
+python -m strategy.fractal_runner \
+  --data-path data/processed/market_data.csv \
+  --output-dir reports/results_tables/fractal_calibrated \
+  --hedge-ratio 0.8499892802109696 \
+  --rebalance-threshold 0.06965934324744885 \
+  --slippage-bps 10 \
+  --gas-cost-usdc 15
+  ```
+
+Этот прогон используется как финальная calibrated specification dynamic Aave-hedged LP стратегии. Base specification сохраняется для сравнения и показывает результат исходной экономической гипотезы до калибровки.
+
 Такой подход закрывает требование обязательного использования `fractal-defi`, но оставляет Aave accounting прозрачным и проверяемым, поскольку готовая Aave V3 lending/borrowing entity в используемой версии framework отсутствует.
 
 ### 9.2. Uniswap V2 data
@@ -1340,31 +1354,37 @@ hedge_ratio ≈ 0.85
 rebalance_threshold ≈ 7%
 ```
 
-Результаты calibrated dynamic Aave-hedged LP:
+Результаты calibrated-прогона:
 
-| Strategy | Final NAV | Net PnL | Ann. Return | Ann. Volatility | Sharpe | Max DD | Turnover | Rebalances | Total Costs |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Calibrated Dynamic Aave Hedged LP | 103,761.01 | 3,836.01 | 3.85% | 6.28% | 0.63 | -2.04% | 22,182.97 | 13 | 217.18 |
+| Strategy                                   |  Final NAV |   Net PnL | Ann. Return | Ann. Volatility | Sharpe |  Max DD |  Turnover | Rebalances | Total Costs |
+| ------------------------------------------ | ---------: | --------: | ----------: | --------------: | -----: | ------: | --------: | ---------: | ----------: |
+| Buy & Hold 50/50                           |  94,137.82 | -5,862.18 |      -5.88% |          33.35% |  -0.01 | -32.48% |      0.00 |          0 |        0.00 |
+| Fractal Plain Uniswap V2 LP                | 104,405.33 |  4,555.33 |       4.58% |          36.17% |   0.30 | -35.70% |      0.00 |          0 |        0.00 |
+| Fractal Fixed Hedge LP                     | 106,031.86 |  6,106.86 |       6.13% |           6.96% |   0.89 |  -4.13% |      0.00 |          0 |        0.00 |
+| Fractal Dynamic Aave Hedged LP, calibrated | 103,761.01 |  3,836.01 |       3.85% |           6.28% |   0.63 |  -2.04% | 22,182.97 |         13 |      217.18 |
 
-Сравнение calibrated dynamic strategy с базовой dynamic strategy показывает улучшение risk-adjusted profile:
+Calibrated dynamic hedge улучшил risk profile относительно base dynamic version:
 
-```text
-Base dynamic:
-Final NAV = 102,780.79
-Sharpe = 0.44
-Max drawdown = -4.11%
-Rebalances = 8
-Total costs = 139.35 USDC
+| Metric                | Base dynamic | Calibrated dynamic |
+| --------------------- | -----------: | -----------------: |
+| Hedge ratio           |         0.75 |               0.85 |
+| Rebalance threshold   |        10.0% |               7.0% |
+| Final NAV             |   102,780.79 |         103,761.01 |
+| Net PnL               |     2,855.79 |           3,836.01 |
+| Annualized return     |        2.87% |              3.85% |
+| Annualized volatility |        7.00% |              6.28% |
+| Sharpe                |         0.44 |               0.63 |
+| Max drawdown          |       -4.11% |             -2.04% |
+| Turnover              |    19,346.97 |          22,182.97 |
+| Rebalances            |            8 |                 13 |
+| Total costs           |       139.35 |             217.18 |
 
-Calibrated dynamic:
-Final NAV = 103,761.01
-Sharpe = 0.63
-Max drawdown = -2.04%
-Rebalances = 13
-Total costs = 217.18 USDC
-```
 
-Калиброванная стратегия увеличивает turnover и transaction costs, но снижает max drawdown примерно в два раза относительно base dynamic configuration. Это подтверждает, что dynamic hedge работает прежде всего как инструмент downside protection, а не как механизм максимизации absolute return.
+Калибровка улучшила dynamic hedge: final NAV вырос примерно на 980 USDC, Sharpe ratio увеличился с 0.44 до 0.63, а max drawdown снизился примерно в два раза — с -4.11% до -2.04%.
+
+При этом calibrated dynamic hedge всё равно уступил fixed hedge по final NAV и Sharpe ratio. Это важный результат: на выбранном историческом периоде значительная часть пользы приходила от самого факта наличия hedge, а не от динамического ребалансирования. Dynamic hedge дал лучший downside protection, но заплатил за это большим turnover и transaction costs.
+
+С учётом calibrated-прогона итоговый вывод становится более точным: Aave hedge подтверждается как risk-management improvement для plain LP. Plain LP имеет высокий max drawdown около -35.7%, тогда как calibrated dynamic hedge снижает max drawdown до -2.04%. Однако hedge не является механизмом максимизации absolute return: fixed hedge показывает более высокий final NAV, а dynamic hedge лучше всего проявляет себя именно как инструмент контроля downside risk.
 
 ### 15.2. Equity curve interpretation
 
@@ -1531,9 +1551,11 @@ Monte Carlo stress tests используются для проверки robust
 ---
 
 
-После Optuna calibration стратегия была улучшена с точки зрения risk-adjusted metrics. Базовая dynamic configuration использовала `hedge_ratio = 0.75` и `rebalance_threshold = 10%`. Калиброванная версия использует `hedge_ratio ≈ 0.85` и `rebalance_threshold ≈ 7%`.
+После калибровки improvement стратегии формулируется точнее. Dynamic Aave hedge не доминирует plain LP по final NAV, но существенно улучшает risk profile. Calibrated dynamic hedge снижает max drawdown с -35.70% у plain LP до -2.04%, а annualized volatility — с 36.17% до 6.28%.
 
-Это изменение делает hedge более агрессивным и повышает частоту корректировки debt. Результат: max drawdown снижается с -4.11% до -2.04%, Sharpe ratio повышается с 0.44 до 0.63. При этом final NAV остаётся ниже, чем у fixed hedge, а transaction costs возрастают. Поэтому improvement формулируется не как «dynamic hedge всегда лучше», а как «calibrated dynamic hedge даёт лучший downside control при умеренной стоимости исполнения».
+Это означает, что стратегия полезна прежде всего для инвестора, который готов пожертвовать частью upside и fee-driven return ради более стабильной equity curve и меньшего downside risk.
+
+При этом fixed hedge остаётся сильным baseline. В нашем historical backtest fixed hedge дал более высокий final NAV и Sharpe ratio, чем dynamic hedge. Следовательно, добавленная ценность dynamic rebalancing не является безусловной: она зависит от выбранного периода, costs, threshold и характера price path.
 
 ---
 
@@ -1553,9 +1575,9 @@ Monte Carlo stress tests используются для проверки robust
 
 ---
 
+Ещё одно ограничение связано с калибровкой. Optuna-калибровка проводилась на том же историческом периоде, который используется для final comparison, поэтому calibrated parameters могут содержать in-sample bias. Чтобы уменьшить этот риск, search space ограничивался только двумя strategy-control параметрами: `hedge_ratio` и `rebalance_threshold`. Gas, slippage, LTV, health factor и circuit breaker threshold не оптимизировались.
 
-Дополнительное ограничение связано с calibration. Optuna calibration проводится на том же historical sample, поэтому её результаты могут содержать in-sample bias. Чтобы не превращать calibration в overfitting, оптимизируются только два strategy-control параметра: `hedge_ratio` и `rebalance_threshold`. Остальные параметры фиксируются на основании EDA, execution assumptions и risk policy. Финальный вывод поэтому строится не на одном best trial, а на устойчивости топовых trials вокруг `hedge_ratio ≈ 0.85` и `rebalance_threshold ≈ 7%`.
-
+Дополнительно широкий поиск показал, что при слишком высоком rebalance threshold dynamic hedge может фактически превращаться в fixed hedge. Поэтому calibrated threshold должен интерпретироваться не как универсально оптимальный параметр, а как результат для конкретного historical sample и заданной objective function.
 ---
 
 ## 18. References
