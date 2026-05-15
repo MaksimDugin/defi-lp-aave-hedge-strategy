@@ -1,0 +1,75 @@
+{
+  "calibrated_params": {
+    "hedge_ratio": 0.8499892802109696,
+    "rebalance_threshold": 0.06965934324744885,
+    "slippage_bps": 10.0,
+    "gas_cost_usdc": 15.0,
+    "initial_capital_usdc": 100000.0
+  },
+  "metrics": [
+    {
+      "strategy_name": "buy_hold_50_50",
+      "final_nav": 94137.82318598832,
+      "net_pnl": -5862.1768140116765,
+      "annualized_return": -0.0587779884632211,
+      "annualized_volatility": 0.3335077918349891,
+      "sharpe": -0.0147141048355953,
+      "max_drawdown": -0.3248324330439208,
+      "turnover": 0.0,
+      "number_of_rebalances": 0,
+      "total_costs": 0.0,
+      "average_health_factor": Infinity,
+      "average_idle_ratio": 0.0
+    },
+    {
+      "strategy_name": "fractal_dynamic_aave_hedged_lp",
+      "final_nav": 103761.01122053109,
+      "net_pnl": 3836.011220531073,
+      "annualized_return": 0.0384963723720221,
+      "annualized_volatility": 0.0628075148143355,
+      "sharpe": 0.6327648290250737,
+      "max_drawdown": -0.0204427412704383,
+      "turnover": 22182.966295582977,
+      "number_of_rebalances": 13,
+      "total_costs": 217.18296629558296,
+      "average_health_factor": 1.969672528107988,
+      "average_idle_ratio": 0.2136282309562052
+    },
+    {
+      "strategy_name": "fractal_fixed_hedge_lp",
+      "final_nav": 106031.8582144906,
+      "net_pnl": 6106.85821449061,
+      "annualized_return": 0.0612873578246597,
+      "annualized_volatility": 0.0696432975940058,
+      "sharpe": 0.8888417428382579,
+      "max_drawdown": -0.0412902187977571,
+      "turnover": 0.0,
+      "number_of_rebalances": 0,
+      "total_costs": 0.0,
+      "average_health_factor": 2.297685823309843,
+      "average_idle_ratio": 0.202856119614602
+    },
+    {
+      "strategy_name": "fractal_plain_uniswap_v2_lp",
+      "final_nav": 104405.33184806423,
+      "net_pnl": 4555.331848064248,
+      "annualized_return": 0.0457499099190457,
+      "annualized_volatility": 0.3617198435571055,
+      "sharpe": 0.3049745273340931,
+      "max_drawdown": -0.3569731755453921,
+      "turnover": 0.0,
+      "number_of_rebalances": 0,
+      "total_costs": 0.0,
+      "average_health_factor": Infinity,
+      "average_idle_ratio": 0.0
+    }
+  ],
+  "figure_paths": [
+    "reports\\figures\\fractal_calibrated\\backtest_drawdown.png",
+    "reports\\figures\\fractal_calibrated\\backtest_equity_curve.png",
+    "reports\\figures\\fractal_calibrated\\backtest_hedge_diagnostics.png",
+    "reports\\figures\\fractal_calibrated\\calibrated_drawdown.png",
+    "reports\\figures\\fractal_calibrated\\calibrated_equity_curve.png",
+    "reports\\figures\\fractal_calibrated\\calibrated_hedge_diagnostics.png"
+  ]
+}

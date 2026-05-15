@@ -6,3 +6,5 @@ __pycache__/
 data/raw/**/*.csv
 data/processed/*.csv
 !research/fixtures/*.csv
+contracts/lib/reports/results_tables/monte_carlo/monte_carlo_nav_timeseries.csv
+reports/results_tables/monte_carlo/*.csv
