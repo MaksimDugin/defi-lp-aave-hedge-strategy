@@ -1,5 +1,5 @@
-from research.strategy.lp_math import compute_lp_value
-from research.strategy.fees import compute_strategy_fees
+from strategy.lp_math import compute_lp_value
+from strategy.fees import compute_strategy_fees
 
 
 def update_lp_position(
