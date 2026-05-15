@@ -76,8 +76,6 @@ Forge-тесты проверяют:
 
 Solidity-прототип был дополнительно задеплоен в Sepolia как mock-based demo environment. Деплой включает mock USDC, mock WETH, mock Uniswap V2 Router/Pair, mock Chainlink ETH/USD oracle, mock Aave Pool и сам `ImpermanentLossHedgingVault`.
 
-Важно: это не production integration с реальными Uniswap V2 и Aave V3 contracts. Цель деплоя — показать on-chain feasibility архитектуры, проверить smoke-test deposit и зафиксировать воспроизводимые адреса прототипа.
-
 Deployment addresses:
 
 | Contract | Address |
@@ -195,11 +193,7 @@ $$
 h = 0.75.
 $$
 
-Для sensitivity analysis дополнительно рассматривается:
-
-$$
-h \in \{0.50, 0.75\}.
-$$
+Для sensitivity analysis дополнительно рассматривается $h = 0.50.$
 
 ### 7.4. Rebalance rule
 
@@ -235,12 +229,7 @@ $$
 Стоимость стратегии считается в USDC. Полный NAV включает LP-позицию, Aave collateral, Aave debt, idle tokens и накопленные costs:
 
 $$
-NAV_t =
-V_{LP,t}
-+ C_{Aave,t}
-- D_{Aave,t}
-+ Idle_t
-- Costs_t.
+NAV_t = V_{LP,t} + C_{Aave,t} - D_{Aave,t} + Idle_t - Costs_t.
 $$
 
 Где:
@@ -270,13 +259,7 @@ $$
 Итоговый PnL стратегии раскладывается на несколько компонентов:
 
 $$
-NetPnL =
-LPFees
-- ImpermanentLoss
-- AaveBorrowCost
-+ AaveSupplyYield
-- GasCosts
-- SlippageCosts.
+NetPnL = LPFees - ImpermanentLoss - AaveBorrowCost + AaveSupplyYield - GasCosts - SlippageCosts.
 $$
 
 Основной источник доходности стратегии — комиссии Uniswap V2. Основные источники потерь — impermanent loss, стоимость займа WETH в Aave, gas costs, slippage и издержки ребалансировки.
@@ -539,7 +522,6 @@ $$
 LPShare_t = \frac{StrategyLiquidity_t}{PoolLiquidity_t}.
 $$
 
-Это допущение критично для корректного backtest: если использовать все pool fees как доход стратегии, результат будет существенно завышен.
 
 ### 9.3. Aave funding proxy
 
@@ -656,7 +638,7 @@ slippage_bps = 10
 base gas cost = 15 USDC per rebalance
 ```
 
-Параметры не делятся на «все оптимизируемые». В проекте используется более консервативный подход:
+В проекте используется более консервативный подход с разделением параметров:
 
 ```text
 1. EDA / data-driven assumptions:
@@ -681,7 +663,7 @@ base gas cost = 15 USDC per rebalance
 
 EDA использовалась не только для описания данных, но и для выбора реалистичных границ параметров.
 
-Во-первых, hourly ETH returns имеют fat tails: минимальное hourly movement около -11.6%, максимальное около +9.6%. Поэтому circuit breaker threshold должен быть достаточно высоким, чтобы не срабатывать на обычный шум, но достаточно низким, чтобы блокировать увеличение debt во время stress move. Базовое значение `max_price_jump = 10%` связано с этой частью EDA.
+Во-первых, hourly ETH returns имеют тяжёлые хвосты: минимальное hourly movement около -11.6%, максимальное около +9.6%. Поэтому circuit breaker threshold должен быть достаточно высоким, чтобы не срабатывать на обычный шум, но достаточно низким, чтобы блокировать увеличение debt во время stress move. Базовое значение `max_price_jump = 10%` связано с этой частью EDA.
 
 Во-вторых, regime analysis показал, что directional regimes часто короткие: медианная длина uptrend/downtrend segments около 2 часов. Это означает, что слишком частый rebalance будет реагировать на шум и создавать издержки. Поэтому `rebalance_threshold` калибруется в умеренном диапазоне, а не близко к нулю.
 
@@ -760,11 +742,6 @@ Calibrated strategy:
 hedge_ratio ≈ 0.85
 rebalance_threshold ≈ 7%
 ```
-
-Экономически это означает, что лучшая dynamic-версия сильнее хеджирует ETH exposure и чаще корректирует WETH debt. Она платит за это большим turnover и более высокими transaction costs, но получает лучший downside profile.
-
-Важно, что calibrated dynamic hedge всё равно не становится стратегией максимизации absolute return. На выбранном историческом периоде fixed hedge остаётся сильным baseline по final NAV и Sharpe. Dynamic hedge после калибровки ценен прежде всего как risk-management layer: он снижает max drawdown до около -2.04%.
-
 ---
 
 ## 12. Baseline comparison
@@ -938,6 +915,29 @@ project strategy layer:
 
 Это делает backtest воспроизводимым через framework primitives и одновременно сохраняет явное описание Aave-hedge assumptions.
 
+### 13.1.2. Analytical notebook
+
+Результаты historical backtest дополнительно оформлены в notebook:
+
+```text
+research/notebooks/02_backtest_results.ipynb
+```
+
+Notebook содержит:
+
+загрузку calibrated fractal outputs;
+таблицу финальных метрик;
+equity curve;
+drawdown plot;
+hedge diagnostics;
+rebalance events;
+PnL decomposition;
+top calibration trials;
+base vs calibrated dynamic comparison;
+regime-level result summary.
+
+Notebook используется как промежуточный слой между raw outputs и whitepaper: все численные выводы в разделе Results берутся из сохранённых .csv файлов, а графики и аналитические комментарии формируются воспроизводимо.
+
 ### 13.2. Начальные условия
 
 Базовые параметры backtest:
@@ -1095,8 +1095,7 @@ Rebalance не выполняется, если:
 4. High-volatility chop
 5. Crash and recovery
 ```
-
-Regime split нужен, потому что стратегия не обязана одинаково хорошо работать во всех условиях. Ожидается, что Aave hedge будет полезнее в боковом и волатильном рынке, где LP fees могут компенсировать funding и execution costs. В сильном направленном тренде hedge может ухудшать результат из-за стоимости займа и отрицательной gamma LP-позиции.
+Ожидается, что Aave hedge будет полезнее в боковом и волатильном рынке, где LP fees могут компенсировать funding и execution costs. В сильном направленном тренде hedge может ухудшать результат из-за стоимости займа и отрицательной gamma LP-позиции.
 
 ### 13.8. Backtesting implications from EDA
 
@@ -1114,30 +1113,42 @@ EDA задаёт несколько важных требований к реа�
 
 ### 13.9. Monte Carlo stress tests
 
-Помимо исторического backtest, стратегия проверяется на Monte Carlo scenarios. Цель Monte Carlo — не заменить historical data, а показать устойчивость стратегии в разных искусственно заданных рыночных режимах.
+Помимо historical backtest, стратегия была дополнительно проверена на Monte Carlo stress scenarios. Цель Monte Carlo — не заменить historical data, а проверить, сохраняется ли основной вывод проекта в искусственно заданных рыночных режимах.
+
+В Monte Carlo генерируются synthetic hourly paths для ETH price, Uniswap V2 TVL, volume, LP fees, Aave borrow/supply rates и gas costs. Затем каждый synthetic path прогоняется через тот же `fractal_runner`, что и historical backtest. Это важно: Monte Carlo использует ту же backtesting architecture, а не отдельную упрощённую модель стратегии.
 
 Сценарии:
 
 ```text
-1. Strong ETH uptrend
-2. Strong ETH downtrend
-3. Sideways low-volatility
-4. High-volatility chop
-5. Crash and recovery
+1. strong_uptrend
+2. strong_downtrend
+3. sideways_low_vol
+4. high_vol_chop
+5. crash_recovery
 ```
 
-Для каждого сценария сравниваются:
+Для каждого сценария сравниваются четыре стратегии:
+
+- Buy & Hold 50/50
+- Fractal Plain Uniswap V2 LP
+- Fractal Fixed Hedge LP
+- Fractal Dynamic Aave Hedged LP
+
+Ключевые метрики:
 
 - final NAV;
+- median final NAV;
+- 5% and 95% final NAV percentiles;
 - max drawdown;
+- annualized volatility;
 - Sharpe ratio;
 - number of rebalances;
-- total funding cost;
-- total gas and slippage costs;
-- hedge error;
-- health factor.
+- turnover;
+- total costs;
+- health factor;
+- dynamic drawdown improvement vs plain LP.
 
-Monte Carlo results используются как robustness check.
+Monte Carlo results используются как robustness check. Основной empirical result проекта остаётся historical fractal-based backtest, а Monte Carlo проверяет, насколько выводы устойчивы в synthetic stress regimes.
 
 ---
 
@@ -1292,11 +1303,9 @@ slippage_cost = trade_notional × slippage_bps / 10,000
 
 ## 15. Results interpretation
 
-> Этот раздел заполняется после запуска historical backtest и Monte Carlo. Ниже приведена структура анализа результатов.
-
 ### 15.1. Summary of results
 
-В этом разделе сравниваются четыре стратегии:
+В historical backtest сравниваются четыре типа стратегий:
 
 1. Buy & Hold 50/50 ETH/USDC;
 2. plain Uniswap V2 ETH/USDC LP;
@@ -1305,22 +1314,23 @@ slippage_cost = trade_notional × slippage_bps / 10,000
 
 Итоговая таблица historical backtest и calibrated run:
 
-| Strategy | Final NAV | Net PnL | Ann. Return | Sharpe | Max DD | Turnover | Rebalances | Total Costs |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Buy & Hold 50/50 | 94,137.82 | -5,862.18 | -5.88% | -0.01 | -32.48% | 0.00 | 0 | 0.00 |
-| Fractal Plain Uniswap V2 LP | 104,405.33 | 4,555.33 | 4.58% | 0.30 | -35.70% | 0.00 | 0 | 0.00 |
-| Fractal Fixed Hedge LP | 105,835.60 | 5,910.60 | 5.93% | 0.79 | -5.57% | 0.00 | 0 | 0.00 |
-| Base Dynamic Aave Hedge LP | 102,780.79 | 2,855.79 | 2.87% | 0.44 | -4.11% | 19,346.97 | 8 | 139.35 |
-| Calibrated Dynamic Aave Hedge LP | 103,761.01 | 3,836.01 | 3.85% | 0.63 | -2.04% | 22,182.97 | 13 | 217.18 |
+| Strategy | Final NAV | Net PnL | Ann. Return | Ann. Volatility | Sharpe | Max DD | Turnover | Rebalances | Total Costs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Buy & Hold 50/50 | 94,137.82 | -5,862.18 | -5.88% | 33.35% | -0.01 | -32.48% | 0.00 | 0 | 0.00 |
+| Fractal Plain Uniswap V2 LP | 104,405.33 | 4,555.33 | 4.58% | 36.17% | 0.30 | -35.70% | 0.00 | 0 | 0.00 |
+| Fractal Fixed Hedge LP | 105,835.60 | 5,910.60 | 5.93% | 7.72% | 0.79 | -5.57% | 0.00 | 0 | 0.00 |
+| Base Dynamic Aave Hedge LP | 102,780.79 | 2,855.79 | 2.87% | 7.00% | 0.44 | -4.11% | 19,346.97 | 8 | 139.35 |
+| Calibrated Dynamic Aave Hedge LP | 103,761.01 | 3,836.01 | 3.85% | 6.28% | 0.63 | -2.04% | 22,182.97 | 13 | 217.18 |
 
-Главный вопрос: побеждает ли dynamic Aave-hedged LP стратегию plain Uniswap V2 LP после учёта costs? На данном historical sample calibrated dynamic hedge не максимизирует final NAV, но существенно улучшает downside metrics и risk-adjusted profile относительно plain LP.
+Главный результат: calibrated dynamic Aave hedge не максимизирует final NAV, но существенно улучшает downside risk относительно plain LP. Plain LP показал final NAV 104,405 USDC и max drawdown -35.70%, тогда как calibrated dynamic hedge показал final NAV 103,761 USDC и max drawdown только -2.04%.
 
+Это означает, что стратегия не является “return-maximizing” модификацией LP. Её ценность — в снижении volatility и drawdown. На выбранном historical sample fixed hedge оказался сильнейшим baseline по final NAV и Sharpe, а calibrated dynamic hedge дал лучший downside protection.
 
 ### 15.1.1. Фактические результаты historical backtest на fractal-defi
 
 Финальный historical backtest был запущен через `strategy.fractal_runner`. В этой версии AMM LP-leg моделируется через `fractal-defi`, а Aave hedge accounting реализован поверх fractal LP state.
 
-Команда запуска:
+Base run:
 
 ```bash
 python -m strategy.fractal_runner \
@@ -1328,126 +1338,93 @@ python -m strategy.fractal_runner \
   --output-dir reports/results_tables
 ```
 
-Фактические результаты:
+Calibrated run:
 
-| Strategy | Final NAV | Net PnL | Ann. Return | Ann. Volatility | Sharpe | Max DD | Turnover | Rebalances | Total Costs |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Buy & Hold 50/50 | 94,137.82 | -5,862.18 | -5.88% | 33.35% | -0.01 | -32.48% | 0.00 | 0 | 0.00 |
-| Fractal Plain Uniswap V2 LP | 104,405.33 | 4,555.33 | 4.58% | 36.17% | 0.30 | -35.70% | 0.00 | 0 | 0.00 |
-| Fractal Fixed Hedge LP | 105,835.60 | 5,910.60 | 5.93% | 7.72% | 0.79 | -5.57% | 0.00 | 0 | 0.00 |
-| Fractal Dynamic Aave Hedged LP | 102,780.79 | 2,855.79 | 2.87% | 7.00% | 0.44 | -4.11% | 19,346.97 | 8 | 139.35 |
-
-Интерпретация результатов:
-
-1. `fractal_plain_uniswap_v2_lp` превзошёл buy & hold по final NAV: 104,405 USDC против 94,138 USDC. Это означает, что на выбранном периоде LP fees и AMM exposure компенсировали часть adverse price dynamics.
-2. `fractal_fixed_hedge_lp` показал лучший final NAV среди LP + hedge стратегий: 105,836 USDC. Также он дал значительно меньший max drawdown, чем plain LP: -5.57% против -35.70%.
-3. `fractal_dynamic_aave_hedged_lp` показал меньший final NAV, чем fixed hedge и plain LP, но сохранил сильный risk-control profile: max drawdown составил -4.11%, annualized volatility — около 7.00%.
-4. Dynamic hedge выполнил 8 ребалансировок, создал turnover около 19,347 USDC и понёс total costs около 139 USDC. Это показывает, что dynamic risk control не является бесплатным: часть доходности теряется на execution costs и корректировку WETH debt.
-
-Итоговый вывод по historical backtest: гипотеза подтверждается частично. Aave hedge не максимизирует absolute return, но резко снижает volatility и drawdown относительно plain LP. На данном периоде fixed hedge оказался эффективнее dynamic hedge по final NAV и Sharpe, а dynamic hedge дал наиболее контролируемый drawdown profile.
-
-
-Дополнительно была запущена calibrated версия dynamic strategy после Optuna calibration. Лучшие параметры:
-
-```text
-hedge_ratio ≈ 0.85
-rebalance_threshold ≈ 7%
+```bash
+python -m strategy.fractal_runner \
+  --data-path data/processed/market_data.csv \
+  --output-dir reports/results_tables/fractal_calibrated \
+  --hedge-ratio 0.8499892802109696 \
+  --rebalance-threshold 0.06965934324744885 \
+  --slippage-bps 10 \
+  --gas-cost-usdc 15
 ```
 
-Результаты calibrated-прогона:
+Calibrated dynamic hedge использует более высокий hedge ratio и более частый rebalance:
 
-| Strategy                                   |  Final NAV |   Net PnL | Ann. Return | Ann. Volatility | Sharpe |  Max DD |  Turnover | Rebalances | Total Costs |
-| ------------------------------------------ | ---------: | --------: | ----------: | --------------: | -----: | ------: | --------: | ---------: | ----------: |
-| Buy & Hold 50/50                           |  94,137.82 | -5,862.18 |      -5.88% |          33.35% |  -0.01 | -32.48% |      0.00 |          0 |        0.00 |
-| Fractal Plain Uniswap V2 LP                | 104,405.33 |  4,555.33 |       4.58% |          36.17% |   0.30 | -35.70% |      0.00 |          0 |        0.00 |
-| Fractal Fixed Hedge LP                     | 106,031.86 |  6,106.86 |       6.13% |           6.96% |   0.89 |  -4.13% |      0.00 |          0 |        0.00 |
-| Fractal Dynamic Aave Hedged LP, calibrated | 103,761.01 |  3,836.01 |       3.85% |           6.28% |   0.63 |  -2.04% | 22,182.97 |         13 |      217.18 |
+| Parameter           | Base dynamic | Calibrated dynamic |
+| ------------------- | -----------: | -----------------: |
+| Hedge ratio         |         0.75 |               0.85 |
+| Rebalance threshold |        10.0% |               7.0% |
+| Rebalances          |            8 |                 13 |
+| Turnover            |    19,346.97 |          22,182.97 |
+| Total costs         |       139.35 |             217.18 |
 
-Calibrated dynamic hedge улучшил risk profile относительно base dynamic version:
+Калибровка улучшила dynamic strategy: final NAV вырос примерно на 980 USDC, Sharpe ratio увеличился с 0.44 до 0.63, а max drawdown снизился примерно в два раза — с -4.11% до -2.04%.
 
-| Metric                | Base dynamic | Calibrated dynamic |
-| --------------------- | -----------: | -----------------: |
-| Hedge ratio           |         0.75 |               0.85 |
-| Rebalance threshold   |        10.0% |               7.0% |
-| Final NAV             |   102,780.79 |         103,761.01 |
-| Net PnL               |     2,855.79 |           3,836.01 |
-| Annualized return     |        2.87% |              3.85% |
-| Annualized volatility |        7.00% |              6.28% |
-| Sharpe                |         0.44 |               0.63 |
-| Max drawdown          |       -4.11% |             -2.04% |
-| Turnover              |    19,346.97 |          22,182.97 |
-| Rebalances            |            8 |                 13 |
-| Total costs           |       139.35 |             217.18 |
+Однако calibrated dynamic hedge всё равно уступил fixed hedge по final NAV и Sharpe. Это важный результат: на данном периоде значительная часть пользы приходила от самого факта наличия hedge, а не от динамического ребалансирования. Dynamic rebalancing добавил лучший downside control, но увеличил turnover и transaction costs.
 
+### 15.1.2. Results by market regime
 
-Калибровка улучшила dynamic hedge: final NAV вырос примерно на 980 USDC, Sharpe ratio увеличился с 0.44 до 0.63, а max drawdown снизился примерно в два раза — с -4.11% до -2.04%.
+Regime-level analysis нужен, чтобы проверить, где именно hedge приносит пользу. Поскольку режимы в датасете не всегда идут непрерывными блоками, ниже используется `compounded_return_inside_regime` и `local_max_drawdown_inside_regime`, а не простой return от первого до последнего timestamp режима.
 
-При этом calibrated dynamic hedge всё равно уступил fixed hedge по final NAV и Sharpe ratio. Это важный результат: на выбранном историческом периоде значительная часть пользы приходила от самого факта наличия hedge, а не от динамического ребалансирования. Dynamic hedge дал лучший downside protection, но заплатил за это большим turnover и transaction costs.
+Для читаемости в таблице оставлены только основные метрики: return внутри режима, local max drawdown, rebalances и costs для calibrated dynamic hedge.
 
-С учётом calibrated-прогона итоговый вывод становится более точным: Aave hedge подтверждается как risk-management improvement для plain LP. Plain LP имеет высокий max drawdown около -35.7%, тогда как calibrated dynamic hedge снижает max drawdown до -2.04%. Однако hedge не является механизмом максимизации absolute return: fixed hedge показывает более высокий final NAV, а dynamic hedge лучше всего проявляет себя именно как инструмент контроля downside risk.
+| Regime        | Buy & Hold Return | Plain LP Return | Fixed Hedge Return | Dynamic Hedge Return | Plain LP Local DD | Dynamic Local DD | Dynamic Rebalances | Dynamic Costs |
+| ------------- | ----------------: | --------------: | -----------------: | -------------------: | ----------------: | ---------------: | -----------------: | ------------: |
+| Downtrend     |           -57.15% |         -59.32% |             -9.42% |               -7.17% |           -33.57% |           -1.82% |                  7 |        116.44 |
+| High-vol chop |            11.42% |          14.06% |              2.91% |                2.43% |           -32.09% |           -1.93% |                  1 |         16.37 |
+| Sideways      |            -9.00% |          -4.00% |              2.50% |                2.54% |           -32.52% |           -1.74% |                  1 |         17.18 |
+| Uptrend       |           116.80% |         134.71% |             11.02% |                6.47% |           -31.55% |           -1.73% |                  4 |         67.19 |
+
+Regime analysis показывает несколько важных эффектов.
+
+Во-первых, hedge особенно полезен в downtrend. Plain LP внутри downtrend regime потерял около -59.32%, тогда как calibrated dynamic hedge потерял только -7.17%. Local drawdown снизился с -33.57% у plain LP до -1.82% у dynamic hedge. Это основной аргумент в пользу стратегии как risk-management layer.
+
+Во-вторых, в sideways regime dynamic hedge показал положительный результат 2.54%, тогда как plain LP дал -4.00%. Это соответствует исходной гипотезе: в боковом рынке LP получает fees, а hedge снижает directional exposure.
+
+В-третьих, в uptrend plain LP и buy & hold ожидаемо выигрывают по доходности. Plain LP дал 134.71%, buy & hold — 116.80%, тогда как dynamic hedge — только 6.47%. Это объясняется тем, что hedge создаёт short ETH exposure и ограничивает upside в растущем рынке.
+
+В-четвёртых, fixed hedge остаётся сильным baseline. Он не несёт rebalancing costs и в ряде режимов даёт лучший return, чем dynamic hedge. Однако dynamic hedge показывает более низкий local drawdown почти во всех основных режимах. Следовательно, dynamic hedge лучше интерпретировать не как способ максимизации доходности, а как более активный механизм контроля downside risk.
+
+Важно не переинтерпретировать Sharpe by regime. Для отдельных режимов, особенно если observations не образуют непрерывный временной интервал, annualized Sharpe может быть нестабильным и давать экстремальные значения. Поэтому в основном тексте используются return, local drawdown, rebalances и costs.
 
 ### 15.2. Equity curve interpretation
 
-Equity curve показывает динамику NAV стратегий во времени.
+Plain LP показывает более высокий final NAV, чем calibrated dynamic hedge, но его equity curve значительно более волатильна. Это видно по annualized volatility 36.17% и max drawdown -35.70%. Calibrated dynamic hedge имеет более низкий final NAV, но гораздо более гладкую equity curve: annualized volatility 6.28% и max drawdown -2.04%.
 
-Если dynamic hedge показывает более плавную equity curve, это означает, что стратегия действительно снижает directional ETH exposure.
-
-Если dynamic hedge отстаёт от plain LP, нужно проверить:
-
-- был ли рынок сильным uptrend;
-- были ли слишком высокие borrow costs;
-- были ли слишком частые rebalances;
-- насколько gas и slippage съели LP fee income.
+Поэтому визуальный вывод по equity curve: dynamic hedge сглаживает траекторию NAV и снижает directional ETH exposure, но ограничивает upside в периоды роста ETH.
 
 ### 15.3. Drawdown interpretation
 
-Max drawdown показывает, насколько сильно стратегия проседала относительно предыдущего пика.
+Drawdown — ключевая метрика проекта. Стратегия проверяется не как способ получить максимальный PnL, а как способ сделать LP-позицию менее уязвимой к направленным движениям ETH.
 
-Ожидаемый результат: dynamic Aave hedge должен иметь меньший max drawdown, чем plain LP, особенно в downtrend или high-volatility regimes.
+Сравнение max drawdown:
 
-Если max drawdown не снижается, возможные причины:
+| Strategy                         |  Max DD |
+| -------------------------------- | ------: |
+| Buy & Hold 50/50                 | -32.48% |
+| Plain Uniswap V2 LP              | -35.70% |
+| Fixed Hedge LP                   |  -4.13% |
+| Calibrated Dynamic Aave Hedge LP |  -2.04% |
 
-- hedge ratio слишком низкий;
-- rebalance слишком редкий;
-- Aave debt создаёт дополнительный риск;
-- LP fees не компенсируют costs;
-- circuit breaker срабатывает слишком поздно.
+Calibrated dynamic hedge показал лучший drawdown profile среди всех стратегий. Это главный положительный результат проекта: Aave hedge резко уменьшает downside risk plain LP.
 
 ### 15.4. PnL decomposition
 
-PnL decomposition показывает, какие компоненты сделали стратегию прибыльной или убыточной.
-
-Основные компоненты:
+PnL стратегии можно представить как:
 
 ```text
-Net PnL =
-LP fees
-- Impermanent loss
-- Aave borrow cost
-+ Aave supply yield
-- Gas costs
-- Slippage costs
+Net PnL = LP fees - Impermanent loss - Aave borrow cost + Aave supply yield - Gas costs - Slippage costs
 ```
 
-Если стратегия проигрывает plain LP, нужно определить, какой компонент стал главным источником потерь:
+Plain LP выигрывает за счёт полной экспозиции к LP fee income и отсутствия hedge costs, но остаётся сильно подвержен impermanent loss и directional risk. Dynamic hedge снижает directional risk, но платит за это rebalancing turnover, gas и slippage.
 
-- слишком высокий Aave borrow cost;
-- слишком большие gas costs;
-- слишком частая ребалансировка;
-- недостаточный LP fee income;
-- слишком большой hedge ratio.
-
-Если стратегия выигрывает plain LP, нужно показать, за счёт чего:
-
-- снижение ETH directional exposure;
-- меньший drawdown;
-- достаточный LP fee income;
-- адекватная частота rebalance;
-- умеренный funding cost.
+В calibrated run dynamic hedge выполнил 13 rebalances, создал turnover около 22,183 USDC и понёс total costs около 217 USDC. Эти costs небольшие относительно initial capital, но они показывают, что risk control не является бесплатным.
 
 ### 15.5. Hedge quality
 
-Качество hedge оценивается через сравнение:
+Качество hedge оценивается через соответствие:
 
 ```text
 LP_ETH_delta_t
@@ -1455,84 +1432,116 @@ vs
 borrowed_WETH_t
 ```
 
-И через hedge error:
+и через hedge error:
 
 ```text
 hedge_error_t =
 abs(target_weth_debt_t - current_weth_debt_t) / LP_ETH_delta_t
 ```
 
-Если hedge error часто высокий, значит стратегия недостаточно хорошо поддерживает target exposure.
+Калиброванная стратегия использует `hedge_ratio ≈ 0.85` и `rebalance_threshold ≈ 7%`. Это означает, что она сильнее хеджирует LP ETH exposure, чем базовая dynamic version, и чаще корректирует WETH debt.
 
-Возможные причины:
-
-- слишком высокий rebalance threshold;
-- circuit breaker часто блокирует rebalance;
-- gas-aware rule пропускает мелкие ребалансировки;
-- Aave health factor ограничивает возможность увеличить debt.
+Факт 13 rebalances показывает, что стратегия действительно оставалась dynamic, а не превратилась в fixed hedge. При этом average health factor около 1.97 означает, что стратегия сохраняла запас относительно liquidation risk, но использовала Aave debt достаточно активно.
 
 ### 15.6. Regime-level interpretation
 
-Результаты нужно отдельно интерпретировать по режимам.
+Режимный анализ подтверждает частичную гипотезу проекта.
 
-#### ETH uptrend
+В downtrend hedge работает лучше всего: он существенно сокращает потери plain LP и снижает local drawdown. В sideways market hedge также полезен: стратегия остаётся положительной, пока plain LP показывает отрицательный результат. В high-volatility chop plain LP имеет более высокий return, но его drawdown остаётся намного хуже, чем у hedged strategies.
 
-В сильном uptrend стратегия может отставать от buy & hold, потому что:
+В uptrend hedge ограничивает upside. Это ожидаемый trade-off: borrowed WETH создаёт short ETH exposure, поэтому стратегия не может полностью участвовать в росте ETH. Следовательно, Aave hedge полезен не во всех режимах, а прежде всего там, где снижение downside risk важнее участия в сильном росте ETH.
 
-- LP продаёт ETH по мере роста цены;
-- hedge создаёт short ETH exposure;
-- borrow WETH становится дороже в USDC-выражении.
+### 15.7. Monte Carlo robustness check
 
-#### ETH downtrend
+Monte Carlo stress tests были запущены как дополнительная robustness-проверка calibrated dynamic strategy. В отличие от historical backtest, Monte Carlo не использует реальные рыночные данные, а генерирует synthetic paths для нескольких рыночных режимов. Поэтому результаты Monte Carlo интерпретируются не как прогноз доходности, а как стресс-тест механики стратегии.
 
-В downtrend hedge должен помогать, потому что short ETH exposure компенсирует часть потерь LP-позиции.
-
-#### Sideways market
-
-В боковом рынке стратегия потенциально наиболее сильна:
-
-- LP собирает fees;
-- impermanent loss ограничен;
-- hedge не слишком дорогой;
-- directional exposure ниже, чем у plain LP.
-
-#### High-volatility chop
-
-В high-volatility chop результат зависит от баланса:
+В Monte Carlo использовались те же calibrated parameters, что и в historical backtest:
 
 ```text
-LP fees vs rebalance costs + funding costs
+hedge_ratio ≈ 0.85
+rebalance_threshold ≈ 7%
+slippage_bps = 10
+gas_cost_usdc = 15
 ```
 
-Если trading volume высокий, LP fees могут компенсировать costs. Если же rebalance слишком частый, стратегия может проиграть.
+Dynamic strategy действительно оставалась dynamic: в synthetic scenarios она выполняла ненулевое число ребалансировок, создавала turnover и несла transaction costs. Это важно, потому что Monte Carlo проверяет не fixed hedge, а полноценную dynamic hedge логику.
 
-### 15.7. Monte Carlo interpretation
+#### Dynamic hedge behaviour in Monte Carlo
 
-Monte Carlo stress tests используются для проверки robustness.
+| Scenario         | Median Final NAV | Median Max DD | Median Rebalances | Median Turnover | Median Costs |
+| ---------------- | ---------------: | ------------: | ----------------: | --------------: | -----------: |
+| crash_recovery   |       164,578.93 |       -67.30% |               167 |      244,094.10 |     2,796.30 |
+| high_vol_chop    |        92,316.07 |       -59.28% |               193 |      263,270.65 |     3,203.41 |
+| sideways_low_vol |       110,055.47 |       -38.43% |                57 |       86,073.61 |       948.31 |
+| strong_downtrend |       169,057.23 |       -56.19% |                96 |      169,534.01 |     1,624.93 |
+| strong_uptrend   |       138,440.49 |       -50.56% |                91 |      162,066.59 |     1,527.07 |
 
-Нужно сравнить:
+Monte Carlo показывает, что в synthetic regimes dynamic hedge становится гораздо активнее, чем в historical backtest. В historical calibrated run стратегия сделала 13 rebalances, а в Monte Carlo median rebalances варьируются от 57 до 193 в зависимости от сценария. Это связано с тем, что synthetic paths специально создают более стрессовые движения цены, TVL и liquidity.
 
-- средний Final NAV;
-- медианный Final NAV;
-- worst-case percentile;
-- max drawdown;
-- частоту circuit breaker events;
-- средний hedge error;
-- средний health factor.
+#### Comparison with plain LP
 
-Если стратегия показывает лучший downside profile, но не всегда лучший final PnL, это всё равно важный результат. Тогда вывод формулируется так: стратегия не создаёт бесплатную доходность, но может улучшать профиль риска plain LP в отдельных режимах.
+Главная метрика Monte Carlo — не только final NAV, а improvement по drawdown относительно plain LP.
 
-### 15.8. Final interpretation template
+| Scenario         | Dynamic − Plain Final NAV, median | Positive NAV Share | Drawdown Improvement, median | Positive Drawdown Improvement Share |
+| ---------------- | --------------------------------: | -----------------: | ---------------------------: | ----------------------------------: |
+| crash_recovery   |                        -59,260.49 |             50.00% |                   14.77 p.p. |                             100.00% |
+| high_vol_chop    |                          8,412.98 |             66.67% |                   17.00 p.p. |                             100.00% |
+| sideways_low_vol |                         -5,449.44 |             50.00% |                   24.18 p.p. |                             100.00% |
+| strong_downtrend |                        -48,073.52 |             25.00% |                   23.27 p.p. |                             100.00% |
+| strong_uptrend   |                        -80,496.78 |             33.33% |                   13.45 p.p. |                             100.00% |
 
-После получения результатов финальный вывод можно оформить так:
+Monte Carlo подтверждает основной вывод historical backtest: dynamic Aave hedge не является стабильным механизмом максимизации final NAV. В части scenarios plain LP сохраняет более высокий upside, особенно когда synthetic path создаёт сильный положительный tail. Однако dynamic hedge во всех сценариях улучшает max drawdown относительно plain LP: positive drawdown improvement share равен 100% во всех пяти scenarios.
 
-```text
-На историческом периоде dynamic Aave-hedged LP [превзошла / не превзошла] plain Uniswap V2 LP по final NAV. При этом стратегия показала [меньший / больший] max drawdown и [лучший / худший] Sharpe ratio.
+Это означает, что Monte Carlo поддерживает risk-management интерпретацию стратегии. Dynamic hedge стабильно снижает downside risk, но не гарантирует превосходство по final NAV.
 
-Основным источником доходности были LP fees. Основными издержками стали Aave borrow cost, gas и slippage. Результаты показывают, что hedge имеет смысл в режимах, где снижение directional exposure компенсирует стоимость funding и execution.
+#### Comparison with fixed hedge
 
-Таким образом, гипотеза [подтверждается / частично подтверждается / не подтверждается] для выбранного периода и параметров.
-```
+Dynamic hedge не доминирует fixed hedge. В некоторых scenarios dynamic strategy проигрывает fixed hedge по final NAV из-за rebalancing costs и turnover. Это согласуется с historical result: fixed hedge является сильным baseline, потому что значительная часть эффекта приходит от самого снижения ETH exposure, а не от частого rebalance.
+
+При этом dynamic hedge полезен тем, что адаптирует WETH debt к меняющейся LP delta. Это особенно важно в stress scenarios, где LP exposure быстро меняется. Стоимость этой адаптации — более высокий turnover и transaction costs.
+
+#### Monte Carlo limitations
+
+Monte Carlo results нужно интерпретировать осторожно. Synthetic paths не являются прогнозом рынка. Они задают искусственные режимы и могут создавать экстремальные tail outcomes, особенно в scenarios с высокой volatility и liquidity noise. Поэтому Monte Carlo используется только как robustness check, а не как основной источник performance claims.
+
+Кроме того, некоторые диагностические метрики hedge error в synthetic paths могут быть чувствительны к конкретной генерации liquidity и TVL. В основной интерпретации используются более устойчивые метрики: final NAV, max drawdown, rebalances, turnover и total costs.
+
+Итог по Monte Carlo: результаты подтверждают, что dynamic Aave hedge стабильно улучшает drawdown profile относительно plain LP, но не всегда улучшает final NAV. Это усиливает главный вывод проекта: стратегия является risk-management improvement, а не безусловной return-maximizing strategy.
+
+### 15.8. Research questions answered
+
+1. **Побеждает ли Aave-hedged LP plain LP по final NAV?**
+   Не в calibrated historical run. Plain LP имеет final NAV 104,405 USDC, а calibrated dynamic hedge — 103,761 USDC.
+
+2. **Улучшает ли hedge risk profile?**
+   Да. Max drawdown plain LP составляет -35.70%, а calibrated dynamic hedge — только -2.04%.
+
+3. **Добавляет ли dynamic rebalancing ценность относительно fixed hedge?**
+   Не по final NAV и не по Sharpe на выбранном периоде. Fixed hedge остаётся сильнее по этим метрикам. Однако dynamic hedge показывает лучший downside protection: max drawdown -2.04% против -4.13% у fixed hedge.
+
+4. **Где стратегия работает лучше всего?**
+   В downtrend и sideways regimes. В downtrend dynamic hedge снижает потери с -59.32% у plain LP до -7.17%. В sideways regime dynamic hedge даёт +2.54%, тогда как plain LP даёт -4.00%.
+
+5. **Где стратегия работает хуже?**
+   В uptrend. Plain LP и buy & hold выигрывают за счёт long ETH exposure, а dynamic hedge ограничивает upside из-за short WETH debt.
+
+6. **Подтверждена ли гипотеза?**
+   Частично. Стратегия подтверждается как risk-management improvement для plain LP, но не как стратегия максимизации absolute return.
+
+7. **Что добавил Monte Carlo?**  
+   Monte Carlo подтвердил risk-management вывод: dynamic hedge не всегда выигрывает у plain LP по final NAV, но во всех synthetic scenarios улучшает max drawdown относительно plain LP.
+
+### 15.9. Final interpretation
+
+Итоговый вывод проекта: Aave-хеджированная LP-стратегия не создаёт безрисковую доходность и не доминирует plain LP по final NAV. Однако она существенно улучшает риск-профиль LP-позиции.
+
+Plain LP оказался лучше calibrated dynamic hedge по final NAV, но имел max drawdown около -35.70%. Calibrated dynamic hedge снизил max drawdown до -2.04%, annualized volatility до 6.28% и сохранил положительный PnL. Это подтверждает, что Aave hedge полезен как инструмент управления downside risk.
+
+Fixed hedge оказался сильным baseline: он дал лучший final NAV и Sharpe среди hedged versions. Это означает, что на выбранном historical sample значительная часть эффекта объясняется самим снижением ETH exposure, а не частым dynamic rebalancing. Тем не менее dynamic hedge дал наиболее контролируемый drawdown profile и лучше всего соответствует conservative risk-management задаче.
+
+Monte Carlo robustness check усиливает этот вывод. В synthetic scenarios dynamic hedge не всегда превосходит plain LP по final NAV, но стабильно улучшает drawdown profile. Поэтому итоговая интерпретация остаётся прежней: Aave hedge полезен прежде всего как механизм контроля downside risk.
+
+Финальная формулировка гипотезы: частичный Aave hedge действительно может улучшить risk-adjusted profile plain Uniswap V2 LP, но его основная ценность — снижение drawdown и volatility, а не максимизация абсолютной доходности.
 
 ---
 
@@ -1547,9 +1556,6 @@ Monte Carlo stress tests используются для проверки robust
 3. **Dynamic adjustment** — hedge пересчитывается по LP delta, а не фиксируется навсегда.
 
 При этом стратегия может проигрывать plain LP, если funding, gas и slippage оказываются выше выгоды от hedge. Поэтому в проекте делается акцент на честном сравнении с baseline и sensitivity analysis.
-
----
-
 
 После калибровки improvement стратегии формулируется точнее. Dynamic Aave hedge не доминирует plain LP по final NAV, но существенно улучшает risk profile. Calibrated dynamic hedge снижает max drawdown с -35.70% у plain LP до -2.04%, а annualized volatility — с 36.17% до 6.28%.
 
@@ -1572,6 +1578,8 @@ Monte Carlo stress tests используются для проверки robust
 В-четвёртых, backtest не моделирует все production risks: MEV, failed transactions, keeper delay, oracle manipulation, smart contract exploits и реальную динамику gas price.
 
 В-пятых, Monte Carlo scenarios являются стресс-тестом, а не прогнозом будущей доходности.
+
+В-шестых, Sepolia deployment не является production validation. Он показывает, что архитектура vault может быть выражена в Solidity и проходит smoke-test, но не моделирует реальные Uniswap V2 Router, реальные Aave V3 Pool interfaces, oracle latency, MEV, production keeper logic и liquidation execution. Production deployment потребовал бы замены mock interfaces на реальные protocol interfaces и отдельного security review.
 
 ---
 
@@ -1606,6 +1614,19 @@ Monte Carlo stress tests используются для проверки robust
 11. **Solidity vault prototype: Impermanent Loss Hedging Vault** — используется как предыдущий prototype стратегии Uniswap V2 ETH/USDC LP + Aave hedge.
 12. **Previous Uniswap V3 hedge homework** — используется как источник опыта по backtesting, hedge logic и regime analysis.
 13. **Aave DeFi EDA notebook** — используется для мотивации выбора Aave V3 и описания lending/borrowing data.
+
+### 18.5. Как источники использовались в проекте
+
+| Категория | Источник | Как использовался |
+|---|---|---|
+| Protocol mechanics | Uniswap V2 whitepaper / docs | Формализация AMM, constant product model, LP fees |
+| Lending / borrowing risk | Aave V3 docs | Health factor, LTV, liquidation threshold, borrow/supply logic |
+| Market data | Binance ETHUSDC | Исторический ценовой ряд ETH/USDC |
+| On-chain pool data | The Graph / Uniswap subgraph | TVL, volume, liquidity, estimated pool fees |
+| Funding proxy | FRED SOFR | Воспроизводимый proxy для Aave funding leg |
+| Backtesting framework | fractal-defi | AMM LP simulation layer |
+| Solidity testing | Foundry / Forge | Vault prototype tests and Sepolia mock deployment |
+| Academic background | IL / AMM hedging papers | Обоснование impermanent loss, negative gamma и hedge logic |
 
 ---
 
@@ -1672,16 +1693,3 @@ transparency/human_contributions.md
 
 В нём фиксируется, какие части проекта были выполнены авторами вручную.
 
-### 19.5. Limitations of LLM assistance
-
-LLM могла предложить некорректные формулы, неполные assumptions или слишком оптимистичную интерпретацию стратегии. Поэтому все ключевые элементы проекта должны быть проверены вручную:
-
-- данные;
-- параметры;
-- формулы;
-- код;
-- метрики;
-- графики;
-- выводы.
-
-Финальный результат проекта основывается не на утверждениях LLM, а на воспроизводимом backtest и проверяемой логике стратегии.
